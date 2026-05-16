@@ -4,7 +4,7 @@ services:
     env: docker
     dockerfilePath: ./backend/Dockerfile
     plan: free
-    rootDir: .
+    rootDir: ./backend
     healthCheckPath: /swagger
     envVars:
       - key: ASPNETCORE_ENVIRONMENT
@@ -20,7 +20,7 @@ services:
       - key: Jwt__Key
         generateValue: true
       - key: Redis__ConnectionString
-        value: redis://default:ES5tBWfe6Oyg08VT3E3EZDKqXX1DQ5EL@redis-14083.c98.us-east-1-4.ec2.cloud.redislabs.com:14083
+        fromVariable: REDIS_CONNECTION_STRING
       - key: FRONTEND_URL
         value: https://rutasegura-frontend.onrender.com
 
@@ -33,6 +33,6 @@ services:
     startCommand: npx serve -s dist -l $PORT
     envVars:
       - key: VITE_GOOGLE_MAPS_API_KEY
-        value: AIzaSyCfaPUzjLuxflaewqHltryE_cRhaiNgR1s
+        fromVariable: GOOGLE_MAPS_API_KEY
       - key: VITE_API_URL
         value: https://rutasegura-api.onrender.com
