@@ -6,11 +6,11 @@ import {
   User,
   LayoutDashboard,
   ShieldCheck,
-  Settings,
   Users,
   Activity,
   Bell,
-  Server,
+  Settings,
+  Brain,
 } from "lucide-react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router";
 import { SafeBot } from "./SafeBot";
@@ -41,6 +41,7 @@ export default function Layout() {
     { name: "Gestión Usuarios", path: "/admin/usuarios", icon: Users },
     { name: "Mapa de Calor", path: "/admin/mapa-calor", icon: MapPin },
     { name: "Alertas", path: "/admin/alertas", icon: Bell },
+    { name: "ML .NET", path: "/admin/ml", icon: Brain },
     { name: "Configuración", path: "/admin/configuracion", icon: Settings },
   ];
 

@@ -1,6 +1,5 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
-using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -17,11 +16,16 @@ namespace RutaSegura.Controllers
         private const int MaxEvidenciaLength = 1_200_000;
         private readonly ApplicationDbContext _context;
         private readonly RedisService _redis;
+        private readonly MlNetService _ml;
 
-        public ReportesController(ApplicationDbContext context, RedisService redis)
+        public ReportesController(
+            ApplicationDbContext context,
+            RedisService redis,
+            MlNetService ml)
         {
             _context = context;
             _redis = redis;
+            _ml = ml;
         }
 
         [HttpGet]
@@ -33,7 +37,11 @@ namespace RutaSegura.Controllers
             {
                 var cache = await _redis.GetStringAsync(cacheKey);
                 if (cache != null)
-                    return Ok(JsonSerializer.Deserialize<object>(cache));
+                {
+                    var cached = ApiJson.Deserialize<object>(cache);
+                    if (cached != null)
+                        return Ok(cached);
+                }
             }
 
             var reportes = await _context.Reportes
@@ -61,7 +69,7 @@ namespace RutaSegura.Controllers
             {
                 await _redis.SetStringAsync(
                     cacheKey,
-                    JsonSerializer.Serialize(reportes),
+                    ApiJson.Serialize(reportes),
                     TimeSpan.FromMinutes(5)
                 );
             }
@@ -83,7 +91,11 @@ namespace RutaSegura.Controllers
             {
                 var cache = await _redis.GetStringAsync(cacheKey);
                 if (cache != null)
-                    return Ok(JsonSerializer.Deserialize<object>(cache));
+                {
+                    var cached = ApiJson.Deserialize<object>(cache);
+                    if (cached != null)
+                        return Ok(cached);
+                }
             }
 
             var from = DateTime.UtcNow.AddDays(-days);
@@ -109,7 +121,7 @@ namespace RutaSegura.Controllers
             {
                 await _redis.SetStringAsync(
                     cacheKey,
-                    JsonSerializer.Serialize(list),
+                    ApiJson.Serialize(list),
                     TimeSpan.FromMinutes(5)
                 );
             }
@@ -128,7 +140,11 @@ namespace RutaSegura.Controllers
             {
                 var cache = await _redis.GetStringAsync(cacheKey);
                 if (cache != null)
-                    return Ok(JsonSerializer.Deserialize<object>(cache));
+                {
+                    var cached = ApiJson.Deserialize<object>(cache);
+                    if (cached != null)
+                        return Ok(cached);
+                }
             }
 
             var reportes = await _context.Reportes
@@ -150,7 +166,7 @@ namespace RutaSegura.Controllers
             {
                 await _redis.SetStringAsync(
                     cacheKey,
-                    JsonSerializer.Serialize(reportes),
+                    ApiJson.Serialize(reportes),
                     TimeSpan.FromMinutes(5)
                 );
             }
@@ -227,6 +243,27 @@ namespace RutaSegura.Controllers
                 .OrderBy(p => p.Id)
                 .FirstOrDefaultAsync();
 
+            var hasCoords =
+                !string.IsNullOrWhiteSpace(req.Latitud) && !string.IsNullOrWhiteSpace(req.Longitud);
+
+            await _ml.EnsureModelsAsync();
+            var nivelIa = 0f;
+            var clasificacion = _ml.ClassifyIncident(
+                req.Descripcion,
+                req.Ubicacion,
+                hasCoords,
+                DateTime.UtcNow);
+            if (clasificacion != null)
+            {
+                if (clasificacion.ProbabilidadesPorTipo.TryGetValue(req.TipoIncidente, out var prob))
+                    nivelIa = prob * 100f;
+                else if (string.Equals(
+                             clasificacion.TipoPredicho,
+                             req.TipoIncidente,
+                             StringComparison.OrdinalIgnoreCase))
+                    nivelIa = (float)clasificacion.ConfianzaPct;
+            }
+
             var reporte = new Reporte
             {
                 TipoIncidente = req.TipoIncidente,
@@ -241,8 +278,7 @@ namespace RutaSegura.Controllers
                 Estado = "Pendiente",
                 CatalogoId = cat?.Id,
                 ProyectoId = proyectoDefault?.Id,
-                // Lab 2: aún no hay IA en el criterio del curso; el campo queda 0.
-                NivelConfianzaIA = 0f,
+                NivelConfianzaIA = nivelIa,
             };
 
             _context.Reportes.Add(reporte);

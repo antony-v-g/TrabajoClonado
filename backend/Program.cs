@@ -1,15 +1,23 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Text.Json;
 using System.Security.Authentication;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using RutaSegura.Data;
+using RutaSegura.ML;
 using RutaSegura.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+builder.Services
+    .AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -51,6 +59,9 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddSingleton<RedisService>();
+builder.Services.AddSingleton<MlModelTrainer>();
+builder.Services.AddSingleton<MlNetService>();
+builder.Services.AddHostedService<MlStartupHostedService>();
 
 
 var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT key is missing.");
@@ -83,11 +94,21 @@ builder.Services
                     return;
 
                 var redis = context.HttpContext.RequestServices.GetRequiredService<RedisService>();
-                if (!redis.IsEnabled)
+                if (redis.IsEnabled)
+                {
+                    var ok = await redis.GetStringAsync($"sesion:{jti}");
+                    if (ok is null)
+                        context.Fail(new AuthenticationException("Sesión revocada o expirada."));
                     return;
+                }
 
-                var ok = await redis.GetStringAsync($"sesion:{jti}");
-                if (ok is null)
+                var db = context.HttpContext.RequestServices
+                    .GetRequiredService<ApplicationDbContext>();
+                var activa = await db.Sesiones.AnyAsync(
+                    s => s.TokenJti == jti
+                         && s.Estado == "Activa"
+                         && s.ExpiraEn > DateTime.UtcNow);
+                if (!activa)
                     context.Fail(new AuthenticationException("Sesión revocada o expirada."));
             },
         };
@@ -126,12 +147,3 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
-
-using (var scope = app.Services.CreateScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    await db.Database.MigrateAsync();
-    await DbSeeder.SeedCatalogoYProyectoAsync(db);
-}
-
-await app.RunAsync();

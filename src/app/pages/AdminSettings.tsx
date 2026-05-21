@@ -13,9 +13,16 @@ export default function AdminSettings() {
     setDbOk(null);
     try {
       const r = await fetch(apiUrl("/api/Admin/db-health"));
-      const j = (await r.json()) as { ok?: boolean; message?: string };
+      const j = (await r.json()) as {
+        ok?: boolean;
+        message?: string;
+        redis?: { habilitado?: boolean; message?: string };
+      };
       setDbOk(!!j?.ok);
-      setDbMsg(j?.message || (j?.ok ? "Conexión correcta" : "Error de conexión"));
+      const redisLine = j?.redis
+        ? ` · Redis: ${j.redis.habilitado ? "activo" : "inactivo"}`
+        : "";
+      setDbMsg((j?.message || (j?.ok ? "Conexión correcta" : "Error")) + redisLine);
     } catch {
       setDbOk(false);
       setDbMsg("No se pudo contactar a la API.");
@@ -42,9 +49,7 @@ export default function AdminSettings() {
           <div>
             <h2 className="text-xl font-bold text-slate-900">Base de datos</h2>
             <p className="text-sm text-slate-500">
-              Comprueba que el API puede conectarse al archivo de base de datos
-              (SQLite: usuarios, reportes, sesiones, etc.). Útil si el servidor
-              acaba de iniciar o cambió la ruta en producción.
+              Comprueba que el API se conecta a SQLite y a Redis (caché y sesiones).
             </p>
           </div>
         </div>

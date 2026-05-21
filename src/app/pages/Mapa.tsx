@@ -11,7 +11,7 @@ import { GoogleMapView, LIMA_CENTRO } from "../components/GoogleMap";
 import {
   getGoogleMapsApiKey,
   getGoogleMapsLoaderConfig,
-  GOOGLE_MAPS_SCRIPT_ID,
+  GOOGLE_MAPS_LOADER_DISABLED,
 } from "../lib/mapsEnv";
 import type { LatLngLiteral } from "../types/maps";
 
@@ -28,7 +28,7 @@ export default function Mapa() {
   const { isLoaded } = useJsApiLoader(
     mapKey
       ? getGoogleMapsLoaderConfig(mapKey)
-      : { id: GOOGLE_MAPS_SCRIPT_ID, googleMapsApiKey: "" },
+      : GOOGLE_MAPS_LOADER_DISABLED,
   );
   const searchBoxRef = useRef<google.maps.places.SearchBox | null>(null);
   const [mapCenter, setMapCenter] = useState<LatLngLiteral>(LIMA_CENTRO);

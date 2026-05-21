@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
-import { authJsonHeaders } from "../lib/api";
+import { apiUrl, authJsonHeaders, readApiErrorMessage } from "../lib/api";
 
 const MAX_EVIDENCIA_BYTES = 850 * 1024;
 
@@ -187,7 +187,7 @@ export default function Reportar() {
       incidentTypes.find((t) => t.id === selectedType)?.label ?? "Otro";
 
     try {
-      const response = await fetch("/api/Reportes/Crear", {
+      const response = await fetch(apiUrl("/api/Reportes/Crear"), {
         method: "POST",
         headers: authJsonHeaders(token),
         body: JSON.stringify({
@@ -205,8 +205,9 @@ export default function Reportar() {
         throw new Error("Sesión expirada. Vuelve a iniciar sesión.");
       }
       if (!response.ok) {
-        const b = await response.json().catch(() => null);
-        throw new Error(b?.message ?? "Error al enviar el reporte.");
+        throw new Error(
+          await readApiErrorMessage(response, "Error al enviar el reporte."),
+        );
       }
 
       clearEvidencia();

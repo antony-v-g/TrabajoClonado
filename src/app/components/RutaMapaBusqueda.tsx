@@ -4,7 +4,7 @@ import type { LatLngLiteral } from "../types/maps";
 import {
   getGoogleMapsApiKey,
   getGoogleMapsLoaderConfig,
-  GOOGLE_MAPS_SCRIPT_ID,
+  GOOGLE_MAPS_LOADER_DISABLED,
 } from "../lib/mapsEnv";
 import { GoogleMapsKeyTroubleshoot } from "./GoogleMapsKeyTroubleshoot";
 import { LIMA_CENTRO } from "./GoogleMap";
@@ -44,7 +44,7 @@ export function RutaMapaBusqueda({
   const { isLoaded, loadError } = useJsApiLoader(
     mapKey
       ? getGoogleMapsLoaderConfig(mapKey)
-      : { id: GOOGLE_MAPS_SCRIPT_ID, googleMapsApiKey: "" },
+      : GOOGLE_MAPS_LOADER_DISABLED,
   );
 
   useEffect(() => {

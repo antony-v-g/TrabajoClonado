@@ -1,4 +1,7 @@
 using System.ComponentModel.DataAnnotations;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
@@ -170,11 +173,36 @@ namespace RutaSegura.Controllers
             _context.Usuarios.Add(nuevoUsuario);
             await _context.SaveChangesAsync();
 
+            if (_redisService.IsEnabled)
+                await _redisService.RemoveAsync("usuarios:todos:v2");
+
             var msg = rol == "Administrador"
                 ? "Cuenta de administrador creada. Inicia sesión con el correo y contraseña que registraste."
                 : "Cuenta creada. Cada persona puede usar su propio correo. Inicia sesión cuando quieras.";
 
             return Ok(new { message = msg, rol });
+        }
+
+        /// <summary>Cierra sesión: revoca en SQLite y elimina la clave en Redis.</summary>
+        [Authorize]
+        [HttpPost("logout")]
+        public async Task<IActionResult> Logout()
+        {
+            var jti = User.FindFirstValue(JwtRegisteredClaimNames.Jti);
+            if (string.IsNullOrEmpty(jti))
+                return Ok(new { message = "Sesión cerrada." });
+
+            var sesion = await _context.Sesiones
+                .FirstOrDefaultAsync(s => s.TokenJti == jti && s.Estado == "Activa");
+            if (sesion is not null)
+            {
+                sesion.Estado = "Revocada";
+                sesion.CerradaEn = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
+
+            await _redisService.RemoveAsync($"sesion:{jti}");
+            return Ok(new { message = "Sesión cerrada correctamente." });
         }
     }
 

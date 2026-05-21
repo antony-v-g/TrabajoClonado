@@ -15,7 +15,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
-import { authJsonHeaders } from "../lib/api";
+import { apiUrl, authJsonHeaders } from "../lib/api";
 
 type ContactoApi = {
   id: number;
@@ -138,8 +138,8 @@ export default function Perfil() {
     setLoadingData(true);
     try {
       const [cRes, uRes] = await Promise.all([
-        fetch("/api/Contactos/mios", { headers: authJsonHeaders(token) }),
-        fetch("/api/Ubicaciones/mias", { headers: authJsonHeaders(token) }),
+        fetch(apiUrl("/api/Contactos/mios"), { headers: authJsonHeaders(token) }),
+        fetch(apiUrl("/api/Ubicaciones/mias"), { headers: authJsonHeaders(token) }),
       ]);
       if (cRes.status === 401 || uRes.status === 401) {
         setDataError("Sesión expirada. Vuelve a iniciar sesión.");
@@ -168,7 +168,7 @@ export default function Perfil() {
     (async () => {
       setLoadingReportes(true);
       try {
-        const r = await fetch("/api/Reportes/mios", {
+        const r = await fetch(apiUrl("/api/Reportes/mios"), {
           headers: authJsonHeaders(token),
         });
         if (!r.ok) return;
@@ -193,7 +193,7 @@ export default function Perfil() {
       setLoadingHistorial(true);
       setHistorialError(null);
       try {
-        const r = await fetch("/api/RutasHistorial/mias", {
+        const r = await fetch(apiUrl("/api/RutasHistorial/mias"), {
           headers: authJsonHeaders(token),
         });
         if (r.status === 401) {
@@ -226,7 +226,7 @@ export default function Perfil() {
     if (!token) return;
     setSavingContact(true);
     try {
-      const r = await fetch("/api/Contactos/mios", {
+      const r = await fetch(apiUrl("/api/Contactos/mios"), {
         method: "POST",
         headers: authJsonHeaders(token),
         body: JSON.stringify({
@@ -277,7 +277,7 @@ export default function Perfil() {
         ubicaciones.length > 0
           ? Math.max(...ubicaciones.map((u) => u.orden)) + 1
           : 0;
-      const r = await fetch("/api/Ubicaciones/mias", {
+      const r = await fetch(apiUrl("/api/Ubicaciones/mias"), {
         method: "POST",
         headers: authJsonHeaders(token),
         body: JSON.stringify({

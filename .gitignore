@@ -18,3 +18,5 @@ bin/
 .DS_Store
 .fake
 
+backend/ML/Artifacts/*.zip
+

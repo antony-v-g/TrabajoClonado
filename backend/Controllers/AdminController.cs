@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RutaSegura.Data;
 using RutaSegura.Models;
+using RutaSegura.Services;
 
 namespace RutaSegura.Controllers
 {
@@ -330,7 +331,7 @@ namespace RutaSegura.Controllers
         }
 
         [HttpGet("db-health")]
-        public async Task<IActionResult> GetDbHealth()
+        public async Task<IActionResult> GetDbHealth([FromServices] RedisService redis)
         {
             try
             {
@@ -340,11 +341,24 @@ namespace RutaSegura.Controllers
                     {
                         ok = can,
                         message = can ? "Conexión a SQLite correcta" : "No se pudo conectar",
+                        redis = new
+                        {
+                            habilitado = redis.IsEnabled,
+                            message = redis.IsEnabled
+                                ? "Redis activo (caché y sesiones)"
+                                : "Redis no configurado — sesiones solo en base de datos",
+                        },
                     });
             }
             catch (Exception ex)
             {
-                return Ok(new { ok = false, message = ex.Message });
+                return Ok(
+                    new
+                    {
+                        ok = false,
+                        message = ex.Message,
+                        redis = new { habilitado = redis.IsEnabled, message = ex.Message },
+                    });
             }
         }
     }

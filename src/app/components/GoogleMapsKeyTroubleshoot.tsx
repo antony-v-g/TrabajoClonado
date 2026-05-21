@@ -47,11 +47,19 @@ export function GoogleMapsKeyTroubleshoot() {
           >
             Credenciales
           </a>
-          : en tu clave, si restringes por <strong>referrers</strong>, añade exactamente:{" "}
-          <code className="bg-white/80 px-1 rounded">http://localhost:5173/*</code> y{" "}
-          <code className="bg-white/80 px-1 rounded">http://127.0.0.1:5173/*</code>. Para
-          probar, deja <strong>sin restricciones</strong> unos minutos: si el mapa carga, el
-          fallo eran las restricciones.
+          : en tu clave, restricción <strong>Referentes HTTP</strong>. Copia tal cual
+          (sin barra final sola; usa <code className="bg-white/80 px-1 rounded">/*</code>):{" "}
+          <code className="block bg-white/80 px-1 rounded mt-1 text-xs break-all">
+            https://rutasegura-ubg3.onrender.com/*
+          </code>
+          <code className="block bg-white/80 px-1 rounded mt-1 text-xs">
+            http://localhost:5173/*
+          </code>
+          No uses solo <code className="bg-white/80 px-1 rounded">…com/</code> — eso no
+          autoriza <code className="bg-white/80 px-1 rounded">/mapa</code>. En F12 → Red, abre{" "}
+          <code className="bg-white/80 px-1 rounded">maps/api/js</code> y confirma que el{" "}
+          <code className="bg-white/80 px-1 rounded">key=</code> sea esta misma clave en Google
+          Cloud.
         </li>
         <li>Guarda cambios, espera 1–2 min y recarga la app (F5).</li>
       </ol>

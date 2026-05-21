@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ArrowLeft, ShieldCheck, Mail, Lock, User, Phone } from "lucide-react";
 import { useNavigate, Link } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
+import { EMAIL_DOMAIN_HINT, isAllowedProjectEmail } from "../lib/emailRules";
 
 export default function Registro() {
   const [nombre, setNombre] = useState("");
@@ -21,6 +22,11 @@ export default function Registro() {
 
     if (password.length < 8 || password.length > 11) {
       setErrorMessage("La contraseña debe tener entre 8 y 11 caracteres.");
+      return;
+    }
+
+    if (!isAllowedProjectEmail(email)) {
+      setErrorMessage(EMAIL_DOMAIN_HINT);
       return;
     }
 

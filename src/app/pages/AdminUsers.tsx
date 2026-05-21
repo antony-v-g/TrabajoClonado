@@ -47,22 +47,50 @@ export default function AdminUsers() {
   const [ficha, setFicha] = useState<UsuarioResumenApi | null>(null);
   const [fichaLoading, setFichaLoading] = useState(false);
   const [fichaError, setFichaError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+
+  const mapUsuario = (raw: Record<string, unknown>): UsuarioItem => ({
+    id: Number(raw.id ?? raw.Id ?? 0),
+    nombre: String(raw.nombre ?? raw.Nombre ?? ""),
+    email: String(raw.email ?? raw.Email ?? ""),
+    telefono: (raw.telefono ?? raw.Telefono) as string | undefined,
+    rol: String(raw.rol ?? raw.Rol ?? ""),
+    estado: String(raw.estado ?? raw.Estado ?? ""),
+    reportesCreados: Number(
+      raw.reportesCreados ?? raw.ReportesCreados ?? 0,
+    ),
+  });
 
   useEffect(() => {
-    let ok = true;
-    fetch(apiUrl("/api/Usuarios"))
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data) => {
-        if (ok) setUsuarios(data || []);
-      })
-      .catch(() => {
-        if (ok) setUsuarios([]);
-      })
-      .finally(() => {
-        if (ok) setLoading(false);
-      });
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      setListError(null);
+      try {
+        const res = await fetch(apiUrl("/api/Usuarios"));
+        if (!res.ok) {
+          throw new Error(
+            await readApiErrorMessage(res, "No se pudo cargar usuarios."),
+          );
+        }
+        const data = (await res.json()) as Record<string, unknown>[];
+        if (!alive) return;
+        const list = Array.isArray(data)
+          ? data.map((row) => mapUsuario(row))
+          : [];
+        setUsuarios(list.filter((u) => u.id > 0));
+      } catch (e) {
+        if (!alive) return;
+        setUsuarios([]);
+        setListError(
+          e instanceof Error ? e.message : "Error al cargar la lista.",
+        );
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
     return () => {
-      ok = false;
+      alive = false;
     };
   }, []);
 
@@ -108,6 +136,12 @@ export default function AdminUsers() {
           <span className="rounded-2xl bg-white px-6 py-4 font-bold text-slate-700 shadow-xl">
             Cargando ficha…
           </span>
+        </div>
+      ) : null}
+
+      {listError ? (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-rose-800 text-sm">
+          {listError}
         </div>
       ) : null}
 

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RutaSegura.Data;
@@ -26,13 +25,17 @@ namespace RutaSegura.Controllers
         [HttpGet]
         public async Task<IActionResult> GetUsuarios()
         {
-            var cacheKey = "usuarios:todos:v2";
+            var cacheKey = "usuarios:todos:v3";
 
             if (_redis.IsEnabled)
             {
                 var cache = await _redis.GetStringAsync(cacheKey);
                 if (cache != null)
-                    return Ok(JsonSerializer.Deserialize<object>(cache));
+                {
+                    var cached = ApiJson.Deserialize<List<object>>(cache);
+                    if (cached != null)
+                        return Ok(cached);
+                }
             }
 
             var usuarios = await _context.Usuarios
@@ -54,7 +57,7 @@ namespace RutaSegura.Controllers
             {
                 await _redis.SetStringAsync(
                     cacheKey,
-                    JsonSerializer.Serialize(usuarios),
+                    ApiJson.Serialize(usuarios),
                     TimeSpan.FromMinutes(5)
                 );
             }
@@ -68,13 +71,17 @@ namespace RutaSegura.Controllers
         [HttpGet("{id:int}/resumen")]
         public async Task<IActionResult> GetResumen(int id)
         {
-            var cacheKey = $"usuarios:resumen:v2:{id}";
+            var cacheKey = $"usuarios:resumen:v3:{id}";
 
             if (_redis.IsEnabled)
             {
                 var cache = await _redis.GetStringAsync(cacheKey);
                 if (cache != null)
-                    return Ok(JsonSerializer.Deserialize<object>(cache));
+                {
+                    var cached = ApiJson.Deserialize<object>(cache);
+                    if (cached != null)
+                        return Ok(cached);
+                }
             }
 
             var usuario = await _context.Usuarios
@@ -121,7 +128,7 @@ namespace RutaSegura.Controllers
             {
                 await _redis.SetStringAsync(
                     cacheKey,
-                    JsonSerializer.Serialize(resultado),
+                    ApiJson.Serialize(resultado),
                     TimeSpan.FromMinutes(5)
                 );
             }
@@ -177,8 +184,8 @@ namespace RutaSegura.Controllers
         {
             if (!_redis.IsEnabled) return;
 
-            await _redis.RemoveAsync("usuarios:todos:v2");
-            await _redis.RemoveAsync($"usuarios:resumen:v2:{usuarioId}");
+            await _redis.RemoveAsync("usuarios:todos:v3");
+            await _redis.RemoveAsync($"usuarios:resumen:v3:{usuarioId}");
         }
     }
 }

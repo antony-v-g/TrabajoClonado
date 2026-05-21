@@ -125,7 +125,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = () => {
+    const tokenToRevoke = user?.token;
     setUser(null);
+    if (tokenToRevoke) {
+      void fetch(apiUrl("/api/Auth/logout"), {
+        method: "POST",
+        headers: authJsonHeaders(tokenToRevoke),
+      }).catch(() => {
+        /* sin conexión: igual se limpia el cliente */
+      });
+    }
   };
 
   const token = user?.token ?? null;

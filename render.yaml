@@ -1,38 +1,34 @@
+# Un solo servicio: API .NET + frontend React (Dockerfile en la raíz)
 services:
   - type: web
-    name: rutasegura-api
+    name: rutasegura
     env: docker
-    dockerfilePath: ./backend/Dockerfile
+    dockerfilePath: ./Dockerfile
     plan: free
-    rootDir: ./backend
+    rootDir: .
     healthCheckPath: /swagger
     envVars:
       - key: ASPNETCORE_ENVIRONMENT
         value: Production
       - key: ASPNETCORE_URLS
         value: http://0.0.0.0:$PORT
+      - key: RENDER
+        value: "true"
       - key: ConnectionStrings__DefaultConnection
-        value: Data Source=/tmp/rutasegura.db
+        value: Data Source=/var/data/rutasegura.db
       - key: Jwt__Issuer
         value: RutaSegura.API
       - key: Jwt__Audience
         value: RutaSegura.Client
       - key: Jwt__Key
         generateValue: true
-      - key: Redis__ConnectionString
-        value: <REPLACE_WITH_REDIS_CONNECTION_STRING>
       - key: FRONTEND_URL
-        value: https://rutasegura-frontend.onrender.com
-
-  - type: web
-    name: rutasegura-frontend
-    runtime: node
-    plan: free
-    rootDir: .
-    buildCommand: npm ci && npm run build
-    startCommand: npx serve -s dist -l $PORT
-    envVars:
+        value: https://rutasegura-ubg3.onrender.com
+      # Configura en el dashboard de Render (no subas la clave al repo):
       - key: VITE_GOOGLE_MAPS_API_KEY
-        value: <REPLACE_WITH_GOOGLE_MAPS_API_KEY>
-      - key: VITE_API_URL
-        value: https://rutasegura-api.onrender.com
+        sync: false
+      - key: Redis__ConnectionString
+        sync: false
+      # Opcional si solo pones host:puerto (Redis Cloud): contraseña en Redis__Password
+      - key: Redis__Password
+        sync: false

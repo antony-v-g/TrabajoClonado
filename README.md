@@ -86,24 +86,39 @@ dotnet ef database update --project backend/RutaSegura.csproj --startup-project 
 
 ## Despliegue en Render
 
-Se agrego `render.yaml` para desplegar:
+`render.yaml` define:
 
-- `rutasegura-api` (Web Service .NET)
-- `rutasegura-redis` (Redis)
-- disco persistente en `/var/data` para SQLite
+- **rutasegura** — Web (Docker: API + front)
+- **rutasegura-redis** — Redis (sesiones JWT + caché de reportes/usuarios)
+- SQLite en `Data Source=/var/data/rutasegura.db` (monta disco persistente en el dashboard si quieres conservar datos)
 
-### Pasos
+### Opción A — Servicio Redis nuevo (recomendado si ya tienes el web en Render)
 
-1. Sube el repositorio a GitHub.
-2. En Render: `New +` -> `Blueprint`.
-3. Selecciona el repositorio.
-4. Render detectara `render.yaml` y creara servicios automaticamente.
-5. Verifica en variables:
-   - `ConnectionStrings__DefaultConnection=Data Source=/var/data/rutasegura.db`
-   - `Jwt__Issuer`
-   - `Jwt__Audience`
-   - `Jwt__Key`
-   - `Redis__ConnectionString`
+1. [dashboard.render.com](https://dashboard.render.com) → **New +** → **Redis**.
+2. Nombre: `rutasegura-redis`, plan **Free**, región la misma que tu web.
+3. Al crear, copia **Internal Redis URL** (empieza con `redis://`).
+4. Abre tu servicio web **rutasegura** (ubg3) → **Environment** → añade o edita:
+   - **Key:** `Redis__ConnectionString`
+   - **Value:** pega la Internal Redis URL (no la pública si el web está en la misma cuenta/región).
+5. **Save Changes** → Render redeploya solo.
+6. En **Logs** del web debe aparecer: `Redis conectado`.
+7. En la app: **Admin → Configuración** → debe decir **Redis: activo**.
+
+### Opción B — Blueprint (repo nuevo o recrear desde cero)
+
+1. Push a GitHub.
+2. Render → **New +** → **Blueprint** → elige el repo.
+3. Render crea web + Redis y enlaza `Redis__ConnectionString` automáticamente.
+4. Añade a mano `VITE_GOOGLE_MAPS_API_KEY` y disco en `/var/data` si aplica.
+
+### Variables que debes revisar en el web service
+
+| Variable | Ejemplo |
+|----------|---------|
+| `Redis__ConnectionString` | `redis://red-xxx:6379` (Internal URL) |
+| `FRONTEND_URL` | `https://rutasegura-ubg3.onrender.com` |
+| `VITE_GOOGLE_MAPS_API_KEY` | clave Maps (build Docker) |
+| `ConnectionStrings__DefaultConnection` | `Data Source=/var/data/rutasegura.db` |
 
 ## Redis en local (opcional)
 

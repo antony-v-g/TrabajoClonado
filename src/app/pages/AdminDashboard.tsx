@@ -314,8 +314,7 @@ export default function AdminDashboard() {
               <h2 className="text-xl font-black">Zonas con más reportes</h2>
               <p className="mt-1 text-sm text-slate-300">
                 Resumen agregado por <strong>texto de ubicación</strong> (últimos
-                7 días). Indicador orientativo según frecuencia, sin modelo de
-                machine learning.
+                7 días). Indicador orientativo según frecuencia de reportes.
               </p>
             </div>
             <MapPin className="w-6 h-6 text-indigo-400" />

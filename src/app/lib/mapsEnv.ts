@@ -9,13 +9,38 @@ export function getGoogleMapsApiKey(): string | undefined {
   return t.length > 0 ? t : undefined;
 }
 
-export function getGoogleMapsLoaderConfig(apiKey: string) {
+/** Referencia estable: evita recargar LoadScript en cada render. */
+export const GOOGLE_MAPS_LIBRARIES = ["places"] as const;
+
+const loaderStaticOptions = {
+  version: "weekly" as const,
+  language: "es" as const,
+  libraries: GOOGLE_MAPS_LIBRARIES,
+};
+
+const loaderConfigByKey = new Map<string, ReturnType<typeof buildLoaderConfig>>();
+
+function buildLoaderConfig(apiKey: string) {
   return {
     id: GOOGLE_MAPS_SCRIPT_ID,
     googleMapsApiKey: apiKey,
-    version: "weekly" as const,
-    language: "es",
-    // Necesario para autocompletado / SearchBox (buscador de direcciones)
-    libraries: ["places" as const],
+    ...loaderStaticOptions,
   };
 }
+
+/** Misma referencia de objeto por clave → evita recargas de LoadScript. */
+export function getGoogleMapsLoaderConfig(apiKey: string) {
+  let cfg = loaderConfigByKey.get(apiKey);
+  if (!cfg) {
+    cfg = buildLoaderConfig(apiKey);
+    loaderConfigByKey.set(apiKey, cfg);
+  }
+  return cfg;
+}
+
+/** Opciones sin clave (misma referencia de `libraries` que el loader activo). */
+export const GOOGLE_MAPS_LOADER_DISABLED = {
+  id: GOOGLE_MAPS_SCRIPT_ID,
+  googleMapsApiKey: "",
+  ...loaderStaticOptions,
+} as const;

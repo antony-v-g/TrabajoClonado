@@ -18,6 +18,7 @@ const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
 const AdminIncidents = lazy(() => import("./pages/AdminIncidents"));
 const AdminUsers = lazy(() => import("./pages/AdminUsers"));
 const AdminSettings = lazy(() => import("./pages/AdminSettings"));
+const AdminMl = lazy(() => import("./pages/AdminMl"));
 const AdminZones = lazy(() => import("./pages/AdminZones"));
 const AdminAlertas = lazy(() => import("./pages/AdminAlertas"));
 const AdminRequireAuth = lazy(() => import("./components/AdminRequireAuth"));
@@ -60,6 +61,7 @@ export const router = createBrowserRouter([
               { path: "usuarios", Component: AdminUsers },
               { path: "mapa-calor", Component: AdminZones },
               { path: "alertas", Component: AdminAlertas },
+              { path: "ml", Component: AdminMl },
               { path: "configuracion", Component: AdminSettings },
             ],
           },

@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { authJsonHeaders } from "../lib/api";
+import { apiUrl, authJsonHeaders } from "../lib/api";
 import {
   Navigation,
   MapPin,
@@ -17,7 +17,11 @@ import {
 import { useJsApiLoader } from "@react-google-maps/api";
 import { RutaMapaBusqueda } from "../components/RutaMapaBusqueda";
 import { buildRoutePath, haversineKm, hashString } from "../lib/geo";
-import { getGoogleMapsApiKey, getGoogleMapsLoaderConfig, GOOGLE_MAPS_SCRIPT_ID } from "../lib/mapsEnv";
+import {
+  getGoogleMapsApiKey,
+  getGoogleMapsLoaderConfig,
+  GOOGLE_MAPS_LOADER_DISABLED,
+} from "../lib/mapsEnv";
 import {
   buildPeruGeocodeQuery,
   pickBestGeocodeResult,
@@ -221,13 +225,73 @@ function generarRutas(
   ];
 }
 
+const ML_VARIANT_TO_ROUTE: Record<string, string> = {
+  segura: "safe",
+  rapida: "fast",
+  equilibrada: "balanced",
+};
+
+type MlRecomendacion = {
+  varianteId: string;
+  nombre: string;
+  preferenceScore: number;
+  seguridadPct: number;
+};
+
+async function cargarRecomendacionesMl(
+  token: string,
+  origen: string,
+  destino: string,
+): Promise<MlRecomendacion[]> {
+  const params = new URLSearchParams({ origen, destino });
+  const r = await fetch(apiUrl(`/api/Ml/recomendar-rutas?${params}`), {
+    headers: authJsonHeaders(token),
+  });
+  if (!r.ok) return [];
+  const j = (await r.json()) as { recomendaciones?: MlRecomendacion[] };
+  return j.recomendaciones ?? [];
+}
+
+function ordenarRutasConMl(
+  opts: RutaOpcion[],
+  recs: MlRecomendacion[],
+): RutaOpcion[] {
+  if (recs.length === 0) return opts;
+  const order = recs
+    .map((rec) => ML_VARIANT_TO_ROUTE[rec.varianteId] ?? rec.varianteId)
+    .filter((id) => opts.some((o) => o.id === id));
+  if (order.length === 0) return opts;
+
+  const byId = new Map(opts.map((o) => [o.id, o]));
+  const sorted: RutaOpcion[] = [];
+  for (const id of order) {
+    const op = byId.get(id);
+    if (op && !sorted.some((s) => s.id === id)) sorted.push(op);
+  }
+  for (const o of opts) {
+    if (!sorted.some((s) => s.id === o.id)) sorted.push(o);
+  }
+
+  const top = recs[0];
+  const topId = top ? ML_VARIANT_TO_ROUTE[top.varianteId] : null;
+  return sorted.map((op) => {
+    if (op.id !== topId) return op;
+    return {
+      ...op,
+      tag: "RECOMENDADA",
+      tagClass: "bg-indigo-600",
+      descripcion: op.descripcion,
+    };
+  });
+}
+
 export default function Rutas() {
   const { token } = useAuth();
   const mapKey = getGoogleMapsApiKey();
   const { isLoaded: mapsReady } = useJsApiLoader(
     mapKey
       ? getGoogleMapsLoaderConfig(mapKey)
-      : { id: GOOGLE_MAPS_SCRIPT_ID, googleMapsApiKey: "" },
+      : GOOGLE_MAPS_LOADER_DISABLED,
   );
 
   const [step, setStep] = useState<"buscar" | "alternativas" | "navegando">(
@@ -260,7 +324,7 @@ export default function Rutas() {
       if (!token) return;
       const ref = opts.find((x) => x.id === "safe") ?? opts[0]!;
       try {
-        const r = await fetch("/api/RutasHistorial/mias", {
+        const r = await fetch(apiUrl("/api/RutasHistorial/mias"), {
           method: "POST",
           headers: authJsonHeaders(token),
           body: JSON.stringify({
@@ -304,7 +368,15 @@ export default function Rutas() {
       const d = await geocodificarDireccion(destinoTexto.trim());
       setOrigen(o);
       setDest(d);
-      const opts = generarRutas(o, d, mode, destinoTexto);
+      let opts = generarRutas(o, d, mode, destinoTexto);
+      if (token) {
+        const recs = await cargarRecomendacionesMl(
+          token,
+          origenTexto.trim() || "Origen",
+          destinoTexto.trim(),
+        );
+        opts = ordenarRutasConMl(opts, recs);
+      }
       setOpciones(opts);
       setStep("alternativas");
       void registrarBusquedaEnHistorial(

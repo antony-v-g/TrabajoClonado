@@ -9,7 +9,7 @@ import type { LatLngLiteral } from "../types/maps";
 import {
   getGoogleMapsApiKey,
   getGoogleMapsLoaderConfig,
-  GOOGLE_MAPS_SCRIPT_ID,
+  GOOGLE_MAPS_LOADER_DISABLED,
 } from "../lib/mapsEnv";
 import { GoogleMapsKeyTroubleshoot } from "./GoogleMapsKeyTroubleshoot";
 
@@ -82,9 +82,7 @@ export function GoogleMapView({
   const [apiKeyRejected, setApiKeyRejected] = useState(false);
 
   const { isLoaded, loadError } = useJsApiLoader(
-    mapKey
-      ? getGoogleMapsLoaderConfig(mapKey)
-      : { id: GOOGLE_MAPS_SCRIPT_ID, googleMapsApiKey: "" },
+    mapKey ? getGoogleMapsLoaderConfig(mapKey) : GOOGLE_MAPS_LOADER_DISABLED,
   );
 
   useEffect(() => {

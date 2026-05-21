@@ -1,0 +1,13 @@
+# Redis local para RutaSegura (caché + sesiones JWT)
+# Uso: docker compose up -d
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - rutasegura_redis:/data
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+volumes:
+  rutasegura_redis:
