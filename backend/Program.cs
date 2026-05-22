@@ -101,20 +101,35 @@ builder.Services
                 var redis = context.HttpContext.RequestServices.GetRequiredService<RedisService>();
                 if (redis.IsEnabled)
                 {
-                    var ok = await redis.GetStringAsync($"sesion:{jti}");
-                    if (ok is null)
-                        context.Fail(new AuthenticationException("Sesión revocada o expirada."));
-                    return;
+                    var cached = await redis.GetStringAsync($"sesion:{jti}");
+                    if (cached is not null)
+                        return;
                 }
 
                 var db = context.HttpContext.RequestServices
                     .GetRequiredService<ApplicationDbContext>();
-                var activa = await db.Sesiones.AnyAsync(
-                    s => s.TokenJti == jti
-                         && s.Estado == "Activa"
-                         && s.ExpiraEn > DateTime.UtcNow);
-                if (!activa)
+                var sesion = await db.Sesiones.AsNoTracking()
+                    .FirstOrDefaultAsync(
+                        s => s.TokenJti == jti
+                             && s.Estado == "Activa"
+                             && s.ExpiraEn > DateTime.UtcNow);
+                if (sesion is null)
+                {
                     context.Fail(new AuthenticationException("Sesión revocada o expirada."));
+                    return;
+                }
+
+                if (redis.IsEnabled)
+                {
+                    var ttl = sesion.ExpiraEn - DateTime.UtcNow;
+                    if (ttl > TimeSpan.Zero)
+                    {
+                        await redis.SetStringAsync(
+                            $"sesion:{jti}",
+                            sesion.UsuarioId.ToString(),
+                            ttl);
+                    }
+                }
             },
         };
     });

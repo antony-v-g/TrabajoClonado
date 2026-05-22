@@ -69,7 +69,8 @@ const incidentTypes = [
 
 export default function Reportar() {
   const [searchParams] = useSearchParams();
-  const { token } = useAuth();
+  const { token, logout } = useAuth();
+  const navigate = useNavigate();
   const [step, setStep] = useState<"formulario" | "confirmacion">("formulario");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedType, setSelectedType] = useState("robo");
@@ -83,7 +84,6 @@ export default function Reportar() {
   const [lng, setLng] = useState<string | null>(null);
   const [evidenciaDataUrl, setEvidenciaDataUrl] = useState<string | null>(null);
   const [evidenciaNombre, setEvidenciaNombre] = useState<string | null>(null);
-  const navigate = useNavigate();
 
   useEffect(() => {
     const u = searchParams.get("ubicacion")?.trim();
@@ -218,7 +218,11 @@ export default function Reportar() {
       });
 
       if (response.status === 401) {
-        throw new Error("Sesión expirada. Vuelve a iniciar sesión.");
+        logout();
+        navigate("/", { replace: true });
+        throw new Error(
+          "Tu sesión ya no es válida en el servidor (p. ej. tras un reinicio). Inicia sesión de nuevo.",
+        );
       }
       if (!response.ok) {
         throw new Error(

@@ -71,6 +71,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
+  /** Token en localStorage sin clave Redis (p. ej. tras reinicio) → 401 en APIs protegidas. */
+  useEffect(() => {
+    const token = user?.token;
+    if (!token) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await fetch(apiUrl("/api/preferencias/mias"), {
+          headers: authJsonHeaders(token),
+        });
+        if (!cancelled && r.status === 401) setUser(null);
+      } catch {
+        /* sin red: no invalidar */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.token]);
+
   const login = async (email: string, password: string) => {
     let response: Response;
     try {
