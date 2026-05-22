@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiUrl, readApiErrorMessage } from "../lib/api";
+import { apiUrl, authJsonHeaders, readApiErrorMessage } from "../lib/api";
+import { useAuth } from "../contexts/AuthContext";
+import { AdminPageHeader } from "../components/AdminPageHeader";
 import {
   MoreHorizontal,
   X,
@@ -41,6 +43,7 @@ type UsuarioResumenApi = {
 };
 
 export default function AdminUsers() {
+  const { token } = useAuth();
   const [usuarios, setUsuarios] = useState<UsuarioItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
@@ -62,12 +65,15 @@ export default function AdminUsers() {
   });
 
   useEffect(() => {
+    if (!token) return;
     let alive = true;
     (async () => {
       setLoading(true);
       setListError(null);
       try {
-        const res = await fetch(apiUrl("/api/Usuarios"));
+        const res = await fetch(apiUrl("/api/Usuarios"), {
+          headers: authJsonHeaders(token),
+        });
         if (!res.ok) {
           throw new Error(
             await readApiErrorMessage(res, "No se pudo cargar usuarios."),
@@ -92,7 +98,7 @@ export default function AdminUsers() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [token]);
 
   const filtrados = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -108,7 +114,9 @@ export default function AdminUsers() {
     setFichaError(null);
     setFichaLoading(true);
     try {
-      const r = await fetch(apiUrl(`/api/Usuarios/${id}/resumen`));
+      const r = await fetch(apiUrl(`/api/Usuarios/${id}/resumen`), {
+        headers: authJsonHeaders(token!),
+      });
       if (!r.ok) {
         const m = await readApiErrorMessage(r, "No encontrado");
         throw new Error(m);
@@ -303,17 +311,10 @@ export default function AdminUsers() {
         </div>
       ) : null}
 
-      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-3xl font-black text-slate-900">
-            Gestión de Usuarios
-          </h1>
-          <p className="mt-2 text-slate-500">
-            Pulsa en una fila o en el menú (⋯) para abrir la ficha con datos
-            reales.
-          </p>
-        </div>
-        <div className="relative">
+      <AdminPageHeader
+        title="Gestión de Usuarios"
+        subtitle="Consulta cuentas registradas y el historial de reportes de cada usuario."
+        extra={
           <input
             type="text"
             value={q}
@@ -321,8 +322,8 @@ export default function AdminUsers() {
             placeholder="Buscar por correo o nombre..."
             className="w-full min-w-[240px] rounded-3xl border border-slate-200 bg-slate-100 px-4 py-3 text-sm text-slate-700 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
           />
-        </div>
-      </div>
+        }
+      />
 
       <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
         <div className="grid grid-cols-[1.4fr_0.8fr_0.6fr_0.5fr] gap-4 p-5 text-sm font-bold uppercase tracking-[0.12em] text-slate-500 border-b border-slate-200">

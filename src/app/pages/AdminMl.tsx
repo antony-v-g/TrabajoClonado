@@ -6,6 +6,7 @@ import {
   XCircle,
   Sparkles,
   Route,
+  MapPin,
 } from "lucide-react";
 import { apiUrl, authJsonHeaders, readApiErrorMessage } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
@@ -13,8 +14,10 @@ import { useAuth } from "../contexts/AuthContext";
 type MlEstado = {
   clasificacionLista: boolean;
   recomendacionLista: boolean;
+  seguridadZonaLista: boolean;
   rutaClasificador: string;
   rutaRecomendador: string;
+  rutaSeguridadZona: string;
   reportesEnBd: number;
   rutasEnBd: number;
   tiposIncidente: string[];
@@ -63,7 +66,7 @@ export default function AdminMl() {
       if (!r.ok) throw new Error(await readApiErrorMessage(r, "No se pudo entrenar"));
       const j = await r.json();
       setTrainMsg(
-        `Listo. Clasificación: ${j.clasificacion?.trainingRows ?? "?"} filas · Recomendación: ${j.recomendacion?.trainingRows ?? "?"} filas.`,
+        `Listo. Clasificación: ${j.clasificacion?.trainingRows ?? "?"} · Recomendación: ${j.recomendacion?.trainingRows ?? "?"} · Zona: ${j.seguridadZona?.trainingRows ?? "?"}.`,
       );
       await load();
     } catch (e) {
@@ -76,11 +79,23 @@ export default function AdminMl() {
   return (
     <div className="flex-1 overflow-y-auto p-6 md:p-10">
       <div className="max-w-4xl mx-auto">
-        <div className="flex items-center gap-4 mb-8">
-          <div className="p-3 rounded-2xl bg-indigo-600 text-white">
-            <Brain className="w-8 h-8" />
+        <div className="mb-8">
+          <div className="flex items-center gap-4">
+            <div className="p-3 rounded-2xl bg-indigo-600 text-white">
+              <Brain className="w-8 h-8" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-black text-slate-900">
+                Motor predictivo
+              </h1>
+              <p className="mt-2 text-slate-500 max-w-xl">
+                Tres modelos entrenados con datos reales del sistema:{" "}
+                <strong>clasificación</strong> de incidentes,{" "}
+                <strong>recomendación</strong> de perfiles de ruta y{" "}
+                <strong>seguridad de zona</strong> para mapa y alertas.
+              </p>
+            </div>
           </div>
-          <h1 className="text-3xl font-black text-slate-900">ML .NET</h1>
         </div>
 
         {err && (
@@ -93,16 +108,24 @@ export default function AdminMl() {
           <p className="text-slate-500">Cargando…</p>
         ) : estado ? (
           <div className="space-y-6">
-            <div className="grid sm:grid-cols-2 gap-4">
+            <div className="grid sm:grid-cols-3 gap-4">
               <ModelCard
                 title="Clasificación"
                 icon={<Sparkles className="w-5 h-5" />}
                 ready={estado.clasificacionLista}
+                hint="Tipo de incidente al reportar"
               />
               <ModelCard
                 title="Recomendación"
                 icon={<Route className="w-5 h-5" />}
                 ready={estado.recomendacionLista}
+                hint="Buscar ruta (usuario)"
+              />
+              <ModelCard
+                title="Seguridad zona"
+                icon={<MapPin className="w-5 h-5" />}
+                ready={estado.seguridadZonaLista}
+                hint="Dashboard, mapa, alertas"
               />
             </div>
 
@@ -129,7 +152,7 @@ export default function AdminMl() {
               <RefreshCw
                 className={`w-4 h-4 ${training ? "animate-spin" : ""}`}
               />
-              {training ? "Actualizando…" : "Actualizar modelos"}
+              {training ? "Actualizando…" : "Reentrenar modelos con datos actuales"}
             </button>
 
             {trainMsg && (
@@ -148,10 +171,12 @@ function ModelCard({
   title,
   icon,
   ready,
+  hint,
 }: {
   title: string;
   icon: React.ReactNode;
   ready: boolean;
+  hint?: string;
 }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -169,6 +194,7 @@ function ModelCard({
       <p className="mt-3 text-sm font-semibold text-slate-700">
         {ready ? "Activo" : "Inactivo"}
       </p>
+      {hint ? <p className="mt-1 text-xs text-slate-500">{hint}</p> : null}
     </div>
   );
 }

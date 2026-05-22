@@ -4,7 +4,19 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Solo usar backend/wwwroot físico; evita servir bundles viejos del manifiesto de build -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Update="wwwroot/**" CopyToOutputDirectory="Never" />
+  </ItemGroup>
+
+  <Target Name="WarnIfFrontendNotBuilt" BeforeTargets="Run">
+    <Warning
+      Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/build-id.txt')"
+      Text="No hay frontend en wwwroot. Desde la raíz del repo ejecuta: npm run build" />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.0" />

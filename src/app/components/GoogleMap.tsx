@@ -10,6 +10,7 @@ import {
   getGoogleMapsApiKey,
   getGoogleMapsLoaderConfig,
   GOOGLE_MAPS_LOADER_DISABLED,
+  hasPlaceholderMapsKey,
 } from "../lib/mapsEnv";
 import { GoogleMapsKeyTroubleshoot } from "./GoogleMapsKeyTroubleshoot";
 
@@ -102,7 +103,8 @@ export function GoogleMapView({
   const mapZoom = zoom ?? 15;
 
   const marcadoresEnMapa = useMemo(() => {
-    if (marcadoresDinamicos && marcadoresDinamicos.length > 0) {
+    if (marcadoresDinamicos != null) {
+      if (marcadoresDinamicos.length === 0) return [];
       return marcadoresDinamicos.map((m) => ({
         id: m.id,
         position: { lat: m.lat, lng: m.lng } as LatLngLiteral,
@@ -121,6 +123,30 @@ export function GoogleMapView({
     }));
   }, [marcadoresDinamicos]);
 
+  if (hasPlaceholderMapsKey()) {
+    return (
+      <div className="h-full grid place-items-center text-center px-6">
+        <div className="max-w-md rounded-2xl border border-rose-200 bg-rose-50 p-5 text-left text-sm text-rose-900">
+          <p className="font-bold text-base mb-2">
+            El archivo .env tiene un valor de ejemplo, no una clave real
+          </p>
+          <p className="mb-3">
+            Ahora mismo está algo como{" "}
+            <code className="bg-white px-1 rounded">YOUR_GOOGLE_MAPS_API_KEY</code>.
+            Debe ser una clave que empiece por{" "}
+            <code className="bg-white px-1 rounded">AIza</code>, creada en Google
+            Cloud → Credenciales.
+          </p>
+          <p>
+            Después de guardar <code className="bg-white px-1 rounded">.env</code>,
+            ejecuta <code className="bg-white px-1 rounded">npm run start:api</code> y
+            recarga el mapa.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (!mapKey) {
     return (
       <div className="h-full grid place-items-center text-center px-6">
@@ -129,15 +155,12 @@ export function GoogleMapView({
             Clave de Google Maps no configurada.
           </p>
           <p className="text-sm text-slate-500 mb-4 text-left">
-            1) En la misma carpeta que <code className="bg-slate-100 px-1 rounded text-xs">package.json</code>, el archivo debe llamarse exactamente{" "}
-            <code className="bg-slate-100 px-1 rounded text-xs">.env</code> (en Windows, en el Bloc de notas elige &quot;Todos los archivos&quot; al guardar — no <code className="text-xs">.env.txt</code>).
-          </p>
-          <p className="text-sm text-slate-500 mb-4 text-left">
-            2) Línea: <code className="bg-slate-100 px-1 rounded text-xs">VITE_GOOGLE_MAPS_API_KEY=tu_clave</code> (sin comillas, sin espacios alrededor del =).
+            1) En la raíz del proyecto (junto a <code className="bg-slate-100 px-1 rounded text-xs">package.json</code>), archivo{" "}
+            <code className="bg-slate-100 px-1 rounded text-xs">.env</code> con{" "}
+            <code className="bg-slate-100 px-1 rounded text-xs">VITE_GOOGLE_MAPS_API_KEY=AIza...</code>
           </p>
           <p className="text-sm text-slate-500 text-left">
-            3) En consola: <code className="bg-slate-100 px-1 rounded text-xs">Ctrl+C</code> y otra vez{" "}
-            <code className="bg-slate-100 px-1 rounded text-xs">npm run dev</code>. Vite solo lee <code className="text-xs">.env</code> al arrancar.
+            2) Ejecuta <code className="bg-slate-100 px-1 rounded text-xs">npm run start:api</code> (Vite solo lee .env al compilar).
           </p>
         </div>
       </div>

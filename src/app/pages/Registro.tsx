@@ -1,8 +1,21 @@
-import { useState } from "react";
-import { ArrowLeft, ShieldCheck, Mail, Lock, User, Phone } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ShieldCheck, Mail, User, Phone } from "lucide-react";
+import PasswordInput from "../components/PasswordInput";
+import PasswordStrengthChecklist from "../components/PasswordStrengthChecklist";
 import { useNavigate, Link } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
-import { EMAIL_DOMAIN_HINT, isAllowedProjectEmail } from "../lib/emailRules";
+import {
+  detectRolFromEmail,
+  dashboardPathForRol,
+  isAllowedProjectEmail,
+  MSG_EMAIL_INVALID,
+  MSG_EMPTY_FIELDS,
+  MSG_REGISTER_SUCCESS,
+} from "../lib/emailRules";
+import {
+  isStrongPassword,
+  MSG_PASSWORD_REGISTER_INVALID,
+} from "../lib/passwordRules";
 
 export default function Registro() {
   const [nombre, setNombre] = useState("");
@@ -15,39 +28,80 @@ export default function Registro() {
   const navigate = useNavigate();
   const { register } = useAuth();
 
+  const detectedRol = useMemo(() => detectRolFromEmail(email), [email]);
+  const [formReady, setFormReady] = useState(false);
+
+  useEffect(() => {
+    setNombre("");
+    setEmail("");
+    setPassword("");
+    setTelefono("");
+    const id = window.setTimeout(() => setFormReady(true), 400);
+    return () => window.clearTimeout(id);
+  }, []);
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    if (password.length < 8 || password.length > 11) {
-      setErrorMessage("La contraseña debe tener entre 8 y 11 caracteres.");
+    if (
+      !nombre.trim() ||
+      !email.trim() ||
+      !password.trim() ||
+      !telefono.trim()
+    ) {
+      setErrorMessage(MSG_EMPTY_FIELDS);
+      return;
+    }
+
+    if (!isStrongPassword(password)) {
+      setErrorMessage(MSG_PASSWORD_REGISTER_INVALID);
       return;
     }
 
     if (!isAllowedProjectEmail(email)) {
-      setErrorMessage(EMAIL_DOMAIN_HINT);
+      setErrorMessage(MSG_EMAIL_INVALID);
       return;
     }
 
     setIsSubmitting(true);
 
     try {
-      const result = await register({ nombre, email, password, telefono });
+      const user = await register({
+        nombre: nombre.trim(),
+        email: email.trim(),
+        password,
+        telefono: telefono.trim(),
+      });
 
-      setSuccessMessage(
-        result.message ?? "Registro exitoso. Ya puedes iniciar sesión.",
-      );
-      setNombre("");
-      setEmail("");
-      setPassword("");
-      setTelefono("");
-      // Redirige al login después de 2 segundos
-      setTimeout(() => navigate("/"), 2000);
+      setSuccessMessage(MSG_REGISTER_SUCCESS);
+      const target = dashboardPathForRol(user.rol);
+      setTimeout(() => navigate(target), 1500);
     } catch (error) {
       let errorMsg = "No se pudo completar el registro.";
       if (error instanceof Error) {
         errorMsg = error.message;
+        if (
+          !errorMsg.startsWith("⚠️") &&
+          errorMsg.toLowerCase().includes("correo") &&
+          (errorMsg.toLowerCase().includes("registrado") ||
+            errorMsg.toLowerCase().includes("existe"))
+        ) {
+          errorMsg = "⚠️ El correo ya está registrado";
+        }
+        if (
+          !errorMsg.startsWith("⚠️") &&
+          errorMsg.toLowerCase().includes("@usuario.com")
+        ) {
+          errorMsg = MSG_EMAIL_INVALID;
+        }
+        if (
+          !errorMsg.startsWith("⚠️") &&
+          errorMsg.toLowerCase().includes("contraseña")
+        ) {
+          errorMsg = MSG_PASSWORD_REGISTER_INVALID;
+        }
       }
       setErrorMessage(errorMsg);
     } finally {
@@ -94,13 +148,6 @@ export default function Registro() {
                   Completa tus datos de perfil y recibe recomendaciones sobre
                   zonas seguras cerca de ti.
                 </p>
-                <p className="rounded-2xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
-                  <span className="font-bold">Formato de correo (demo del proyecto):</span>{" "}
-                  <code className="text-indigo-200">tunombre@usuario.com</code> para
-                  cuentas de app, y{" "}
-                  <code className="text-indigo-200">tunombre@admin.com</code> para
-                  administrador. No se aceptan Gmail, Outlook, etc. en la API.
-                </p>
               </div>
 
               <div className="rounded-3xl border border-slate-700/60 bg-slate-900/80 p-6 shadow-2xl">
@@ -130,7 +177,24 @@ export default function Registro() {
                 </h2>
               </div>
 
-              <form className="space-y-5" onSubmit={handleSubmit}>
+              <form
+                className="relative space-y-5"
+                onSubmit={handleSubmit}
+                autoComplete="off"
+                data-form-type="other"
+              >
+                {/* Campos señuelo: el navegador suele rellenar estos en lugar de los reales */}
+                <div
+                  className="pointer-events-none absolute -left-[9999px] h-0 w-0 overflow-hidden"
+                  aria-hidden
+                >
+                  <input type="text" name="fake-email" autoComplete="username" />
+                  <input
+                    type="password"
+                    name="fake-password"
+                    autoComplete="current-password"
+                  />
+                </div>
                 {errorMessage && (
                   <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
                     {errorMessage}
@@ -151,62 +215,85 @@ export default function Registro() {
                       <User className="w-5 h-5" />
                     </div>
                     <input
+                      name="nombre-registro"
                       value={nombre}
                       onChange={(event) => setNombre(event.target.value)}
-                      required
+                      autoComplete="name"
                       className="w-full rounded-2xl border border-slate-700/80 bg-slate-950/70 px-12 py-3 text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                       placeholder="Ej. Andrea López"
                     />
                   </div>
                 </div>
 
-                <div>
-                  <label className="text-sm font-semibold text-slate-300">
-                    Correo (único por persona)
-                  </label>
-                  <p className="mt-1 text-xs text-slate-500">
-                    <code className="text-slate-300">@usuario.com</code> = usuario.{" "}
-                    <code className="text-slate-300">@admin.com</code> = administrador.
-                    La parte antes de @ es libre (ej. luciana, juan, soporte).
+                {!formReady ? (
+                  <p className="text-sm text-slate-400 animate-pulse py-6 text-center">
+                    Preparando formulario seguro…
                   </p>
-                  <div className="mt-2 relative">
-                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
-                      <Mail className="w-5 h-5" />
+                ) : (
+                  <>
+                    <div>
+                      <label className="text-sm font-semibold text-slate-300">
+                        Correo (único por persona)
+                      </label>
+                      <p className="mt-1 text-xs text-slate-500">
+                        <code className="text-slate-300">@usuario.com</code> = usuario.{" "}
+                        <code className="text-slate-300">@admin.com</code> = administrador.
+                      </p>
+                      <div className="mt-2 relative">
+                        <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                          <Mail className="w-5 h-5" />
+                        </div>
+                        <input
+                          id="registro-correo"
+                          name="correo-registro"
+                          value={email}
+                          type="text"
+                          inputMode="email"
+                          autoCapitalize="none"
+                          spellCheck={false}
+                          onChange={(event) => setEmail(event.target.value)}
+                          autoComplete="off"
+                          data-lpignore="true"
+                          data-1p-ignore="true"
+                          data-form-type="other"
+                          className="w-full rounded-2xl border border-slate-700/80 bg-slate-950/70 px-12 py-3 text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                          placeholder="luciana@usuario.com"
+                        />
+                      </div>
+                      {detectedRol && (
+                        <p className="mt-2 text-sm font-medium text-emerald-300">
+                          Rol detectado: {detectedRol}
+                        </p>
+                      )}
                     </div>
-                    <input
-                      value={email}
-                      type="email"
-                      onChange={(event) => setEmail(event.target.value)}
-                      required
-                      className="w-full rounded-2xl border border-slate-700/80 bg-slate-950/70 px-12 py-3 text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                      placeholder="luciana@usuario.com"
-                    />
-                  </div>
-                </div>
 
-                <div>
-                  <label className="text-sm font-semibold text-slate-300">
-                    Contraseña
-                  </label>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Entre 8 y 11 caracteres (corta y sencilla: letras, números, símbolos).
-                  </p>
-                  <div className="mt-2 relative">
-                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
-                      <Lock className="w-5 h-5" />
+                    <div>
+                      <label className="text-sm font-semibold text-slate-300">
+                        Contraseña
+                      </label>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Mínimo 16 caracteres: mayúscula, minúscula, número y
+                        símbolo (ej. RutaSegura2025!).
+                      </p>
+                      <div className="mt-2">
+                        <PasswordInput
+                          id="registro-password"
+                          name="password-registro"
+                          value={password}
+                          onChange={setPassword}
+                          autoComplete="new-password"
+                          preventAutofill
+                          variant="dark"
+                          placeholder="Ej. RutaSegura2025!"
+                        />
+                        <PasswordStrengthChecklist
+                          password={password}
+                          variant="dark"
+                        />
+                      </div>
                     </div>
-                    <input
-                      value={password}
-                      type="password"
-                      onChange={(event) => setPassword(event.target.value)}
-                      required
-                      minLength={8}
-                      maxLength={11}
-                      className="w-full rounded-2xl border border-slate-700/80 bg-slate-950/70 px-12 py-3 text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                      placeholder="8-11 caracteres, ej. Efgh1234"
-                    />
-                  </div>
-                </div>
+                  </>
+                )}
 
                 <div>
                   <label className="text-sm font-semibold text-slate-300">
@@ -217,10 +304,11 @@ export default function Registro() {
                       <Phone className="w-5 h-5" />
                     </div>
                     <input
+                      name="telefono-registro"
                       value={telefono}
                       type="tel"
                       onChange={(event) => setTelefono(event.target.value)}
-                      required
+                      autoComplete="tel"
                       className="w-full rounded-2xl border border-slate-700/80 bg-slate-950/70 px-12 py-3 text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                       placeholder="+51 912 345 678"
                     />

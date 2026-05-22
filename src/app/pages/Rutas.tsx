@@ -1,4 +1,5 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
 import { apiUrl, authJsonHeaders } from "../lib/api";
 import {
@@ -13,7 +14,22 @@ import {
   CheckCircle2,
   ShieldAlert,
   Map,
+  Loader2,
 } from "lucide-react";
+import { MapaEventoToast } from "../components/MapaEventoToast";
+import {
+  postMapaEvento,
+  toastFromMapaEvento,
+  type EventoToast,
+} from "../lib/mapaEventosApi";
+import {
+  fetchPreferencias,
+  avisoSinLlegada,
+  modoToTransport,
+  aplicarPreferenciaRutasNocturnas,
+  type PreferenciasUsuario,
+} from "../lib/preferenciasUsuario";
+import { fetchReglasSistema, type ReglasSistema } from "../lib/reglasSistema";
 import { useJsApiLoader } from "@react-google-maps/api";
 import { RutaMapaBusqueda } from "../components/RutaMapaBusqueda";
 import { buildRoutePath, haversineKm, hashString } from "../lib/geo";
@@ -286,7 +302,12 @@ function ordenarRutasConMl(
 }
 
 export default function Rutas() {
+  const [searchParams] = useSearchParams();
   const { token } = useAuth();
+  const [navToast, setNavToast] = useState<EventoToast | null>(null);
+  const [navAccionando, setNavAccionando] = useState<"llegue" | "sos" | null>(
+    null,
+  );
   const mapKey = getGoogleMapsApiKey();
   const { isLoaded: mapsReady } = useJsApiLoader(
     mapKey
@@ -308,11 +329,107 @@ export default function Rutas() {
   const [opciones, setOpciones] = useState<RutaOpcion[]>([]);
   const [rutaElegida, setRutaElegida] = useState<RutaOpcion | null>(null);
   const [usarGpsOrigen, setUsarGpsOrigen] = useState(true);
+  const [prefs, setPrefs] = useState<PreferenciasUsuario | null>(null);
+  const [reglas, setReglas] = useState<ReglasSistema | null>(null);
+  const llegueBienOkRef = useRef(false);
+  const prevStepRef = useRef(step);
+
+  useEffect(() => {
+    const d = searchParams.get("destino")?.trim();
+    if (d) setDestinoTexto(d);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!token) return;
+    void fetchPreferencias(token).then((p) => {
+      if (!p) return;
+      setPrefs(p);
+      setMode(modoToTransport(p.modoMovilidadPredeterminado));
+    });
+  }, [token]);
+
+  useEffect(() => {
+    void fetchReglasSistema().then(setReglas);
+  }, []);
+
+  useEffect(() => {
+    const prev = prevStepRef.current;
+    if (
+      prev === "navegando" &&
+      step !== "navegando" &&
+      !llegueBienOkRef.current &&
+      prefs?.avisoAutomaticoLlegada &&
+      token
+    ) {
+      void avisoSinLlegada(token, destinoTexto.trim()).then((res) => {
+        if (res?.registrado && res.mensaje) {
+          setNavToast({
+            kind: "info",
+            titulo: "Aviso automático de llegada",
+            mensaje: res.mensaje,
+          });
+        }
+      });
+    }
+    prevStepRef.current = step;
+  }, [step, token, prefs?.avisoAutomaticoLlegada, destinoTexto]);
 
   const startNavigation = useCallback((r: RutaOpcion) => {
+    llegueBienOkRef.current = false;
     setRutaElegida(r);
     setStep("navegando");
+    setNavToast(null);
   }, []);
+
+  const enviarEventoNavegacion = useCallback(
+    async (tipo: "llegue-bien" | "sos") => {
+      if (!token) {
+        setNavToast({
+          kind: "info",
+          titulo: "Sesión requerida",
+          mensaje: "Inicia sesión para usar SOS o Llegué bien.",
+        });
+        return;
+      }
+      setNavAccionando(tipo === "llegue-bien" ? "llegue" : "sos");
+      try {
+        const ubicacionTexto =
+          destinoTexto.trim() ||
+          `Destino de ruta (${rutaElegida?.nombre ?? "en curso"})`;
+        const data = await postMapaEvento(token, tipo, {
+          latitud: dest?.lat,
+          longitud: dest?.lng,
+          ubicacionTexto,
+        });
+        if (!data) {
+          setNavToast({
+            kind: "info",
+            titulo: "No se pudo registrar",
+            mensaje: "Revisa que el servidor esté activo e intenta de nuevo.",
+          });
+          return;
+        }
+        setNavToast(toastFromMapaEvento(tipo, data));
+        if (tipo === "llegue-bien") {
+          llegueBienOkRef.current = true;
+          setTimeout(() => {
+            setStep("buscar");
+            setRutaElegida(null);
+            setNavToast(null);
+          }, 4500);
+        }
+      } catch {
+        setNavToast({
+          kind: "info",
+          titulo: "Error de conexión",
+          mensaje: "No se pudo contactar al servidor.",
+        });
+      } finally {
+        setNavAccionando(null);
+      }
+    },
+    [token, destinoTexto, dest, rutaElegida],
+  );
 
   const registrarBusquedaEnHistorial = useCallback(
     async (
@@ -377,6 +494,11 @@ export default function Rutas() {
         );
         opts = ordenarRutasConMl(opts, recs);
       }
+      opts = aplicarPreferenciaRutasNocturnas(
+        opts,
+        prefs?.evitarZonasOscurasNoche ?? true,
+        reglas?.pesoZonasOscurasPct ?? 40,
+      );
       setOpciones(opts);
       setStep("alternativas");
       void registrarBusquedaEnHistorial(
@@ -418,6 +540,12 @@ export default function Rutas() {
             <p className="text-indigo-200 font-medium text-sm">
               ~{rutaElegida.minutos} min estimados · {rutaElegida.km.toFixed(2)} km
             </p>
+            {prefs?.avisoAutomaticoLlegada && (
+              <p className="text-indigo-100/90 text-xs mt-1 max-w-md">
+                Si sales sin «Llegué bien», se avisará a tus contactos (preferencia
+                activa).
+              </p>
+            )}
           </div>
           <div className="bg-emerald-500 px-3 py-1 rounded-lg border border-emerald-400">
             <span className="text-xs font-bold block text-center">Score</span>
@@ -453,21 +581,29 @@ export default function Rutas() {
         <div className="bg-white p-6 rounded-b-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.1)] border-t border-slate-200 z-10 flex gap-4">
           <button
             type="button"
-            className="flex-1 bg-red-600 hover:bg-red-700 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 text-lg transition-all"
-            onClick={() => window.alert("¡SOS! (demo)")}
+            disabled={navAccionando !== null}
+            className="flex-1 bg-red-600 hover:bg-red-700 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 text-lg transition-all disabled:opacity-60"
+            onClick={() => void enviarEventoNavegacion("sos")}
           >
-            <ShieldAlert className="w-6 h-6" /> SOS
+            {navAccionando === "sos" ? (
+              <Loader2 className="w-6 h-6 animate-spin" />
+            ) : (
+              <ShieldAlert className="w-6 h-6" />
+            )}
+            SOS
           </button>
           <button
             type="button"
-            className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 text-lg transition-all"
-            onClick={() => {
-              window.alert("Notificación a contactos (demo).");
-              setStep("buscar");
-              setRutaElegida(null);
-            }}
+            disabled={navAccionando !== null}
+            className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 text-lg transition-all disabled:opacity-60"
+            onClick={() => void enviarEventoNavegacion("llegue-bien")}
           >
-            <CheckCircle2 className="w-6 h-6" /> Llegué Bien
+            {navAccionando === "llegue" ? (
+              <Loader2 className="w-6 h-6 animate-spin" />
+            ) : (
+              <CheckCircle2 className="w-6 h-6" />
+            )}
+            Llegué Bien
           </button>
           <button
             type="button"
@@ -477,6 +613,10 @@ export default function Rutas() {
             <Map className="w-6 h-6" />
           </button>
         </div>
+
+        {navToast && (
+          <MapaEventoToast toast={navToast} onClose={() => setNavToast(null)} />
+        )}
       </div>
     );
   }

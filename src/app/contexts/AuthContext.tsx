@@ -1,5 +1,10 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { apiUrl, readApiErrorMessage } from "../lib/api";
+import { apiUrl, authJsonHeaders, readApiErrorMessage } from "../lib/api";
+import {
+  MSG_EMAIL_EXISTS,
+  MSG_USER_NOT_FOUND,
+  MSG_WRONG_PASSWORD,
+} from "../lib/emailRules";
 
 export type AuthUser = {
   id: number;
@@ -20,17 +25,26 @@ type RegisterData = {
   telefono: string;
 };
 
-export type RegisterResult = {
-  message?: string;
-  rol?: string;
-};
+function mapAuthResponse(data: Record<string, unknown>): AuthUser {
+  return {
+    id: data.id as number,
+    nombre: data.nombre as string,
+    email: data.email as string,
+    telefono: data.telefono as string | undefined,
+    rol: data.rol as string,
+    estado: data.estado as string | undefined,
+    token: data.token as string,
+    jti: data.jti as string,
+    expiraEn: data.expiraEn as string,
+  };
+}
 
 type AuthContextValue = {
   user: AuthUser | null;
   isAdmin: boolean;
   token: string | null;
   login: (email: string, password: string) => Promise<AuthUser>;
-  register: (data: RegisterData) => Promise<RegisterResult>;
+  register: (data: RegisterData) => Promise<AuthUser>;
   logout: () => void;
 };
 
@@ -60,7 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = async (email: string, password: string) => {
     let response: Response;
     try {
-      response = await fetch(apiUrl("/api/Auth/login"), {
+      response = await fetch(apiUrl("/api/auth/login"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -74,6 +88,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error(MSG_USER_NOT_FOUND);
+      }
+      if (response.status === 401) {
+        throw new Error(MSG_WRONG_PASSWORD);
+      }
       const msg = await readApiErrorMessage(
         response,
         "No se pudo iniciar sesión.",
@@ -81,18 +101,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(msg);
     }
 
-    const data = await response.json();
-    const next: AuthUser = {
-      id: data.id,
-      nombre: data.nombre,
-      email: data.email,
-      telefono: data.telefono,
-      rol: data.rol,
-      estado: data.estado,
-      token: data.token,
-      jti: data.jti,
-      expiraEn: data.expiraEn,
-    };
+    const data = (await response.json()) as Record<string, unknown>;
+    const next = mapAuthResponse(data);
     setUser(next);
     return next;
   };
@@ -100,7 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const register = async (registerData: RegisterData) => {
     let response: Response;
     try {
-      response = await fetch(apiUrl("/api/Auth/register"), {
+      response = await fetch(apiUrl("/api/auth/register"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -114,6 +124,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (!response.ok) {
+      if (response.status === 409) {
+        throw new Error(MSG_EMAIL_EXISTS);
+      }
       const errorMessage = await readApiErrorMessage(
         response,
         "No se pudo registrar el usuario.",
@@ -121,14 +134,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(errorMessage);
     }
 
-    return (await response.json().catch(() => ({}))) as RegisterResult;
+    const data = (await response.json()) as Record<string, unknown>;
+    const next = mapAuthResponse(data);
+    setUser(next);
+    return next;
   };
 
   const logout = () => {
     const tokenToRevoke = user?.token;
     setUser(null);
     if (tokenToRevoke) {
-      void fetch(apiUrl("/api/Auth/logout"), {
+      void fetch(apiUrl("/api/auth/logout"), {
         method: "POST",
         headers: authJsonHeaders(tokenToRevoke),
       }).catch(() => {

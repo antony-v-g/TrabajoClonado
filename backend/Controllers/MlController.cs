@@ -75,7 +75,41 @@ public class MlController : ControllerBase
                 message = "Modelos ML.NET entrenados y guardados.",
                 clasificacion = result.Incident,
                 recomendacion = result.Recommendation,
+                seguridadZona = result.ZoneSafety,
             });
+    }
+
+    /// <summary>Clasifica seguridad de zona (cantidad de reportes, tráfico, iluminación, hora).</summary>
+    [HttpPost("clasificar-zona")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ClasificarZona(
+        [FromBody] ClasificarZonaRequest req,
+        CancellationToken ct)
+    {
+        await _ml.EnsureModelsAsync(ct);
+        var result = _ml.ClassifyZoneSafety(
+            req.CantidadReportes,
+            req.Trafico,
+            req.Iluminacion,
+            req.Hora);
+        var display = ZoneSafetyPresentation.ToDisplay(result.Nivel, result.ConfianzaPct);
+        return Ok(
+            new
+            {
+                result.Nivel,
+                display.IndicadorVisual,
+                display.Etiqueta,
+                result.ConfianzaPct,
+                motor = "ML.NET",
+            });
+    }
+
+    public class ClasificarZonaRequest
+    {
+        public float CantidadReportes { get; set; }
+        public float Trafico { get; set; }
+        public float Iluminacion { get; set; }
+        public float Hora { get; set; } = 12f;
     }
 
     public class ClasificarIncidenteRequest

@@ -5,6 +5,10 @@
   "type": "module",
   "scripts": {
     "build": "vite build && npm run copy-frontend",
+    "build:api": "npm run build && dotnet build backend/RutaSegura.csproj",
+    "start:api": "npm run build && dotnet run --project backend/RutaSegura.csproj",
+    "dev:api": "dotnet run --project backend/RutaSegura.csproj",
+    "dev:full": "npx --yes concurrently -k -n api,web -c blue,green \"npm run dev:api\" \"npm run dev\"",
     "copy-frontend": "node scripts/copy-dist.js",
     "dev": "vite",
     "lint": "npm run lint:css",

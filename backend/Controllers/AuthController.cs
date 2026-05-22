@@ -82,50 +82,19 @@ namespace RutaSegura.Controllers
 
             var usuario = await _context.Usuarios
                 .FirstOrDefaultAsync(u => u.Email.ToLower() == emailLogin);
-            if (usuario == null || !PasswordService.Verify(usuario.PasswordHash, request.Password))
+            if (usuario == null)
             {
-                return Unauthorized(new { message = "Correo o contraseña incorrectos." });
+                return NotFound(new { message = "Usuario no registrado" });
+            }
+
+            if (!PasswordService.Verify(usuario.PasswordHash, request.Password))
+            {
+                return Unauthorized(new { message = "Contraseña incorrecta." });
             }
 
             try
             {
-                var (token, jti, expiraEn) = _jwtService.GenerateToken(usuario);
-                var userAgent = Request.Headers.UserAgent.ToString();
-                if (userAgent.Length > 500)
-                {
-                    userAgent = userAgent.Substring(0, 500);
-                }
-
-                var sesion = new Sesion
-                {
-                    UsuarioId = usuario.Id,
-                    TokenJti = jti,
-                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
-                    UserAgent = string.IsNullOrEmpty(userAgent) ? null : userAgent,
-                    Origen = "web",
-                    ExpiraEn = expiraEn,
-                    Estado = "Activa",
-                };
-                _context.Sesiones.Add(sesion);
-                await _context.SaveChangesAsync();
-
-                await _redisService.SetStringAsync(
-                    $"sesion:{jti}", usuario.Id.ToString(), expiraEn - DateTime.UtcNow);
-
-                return Ok(
-                    new
-                    {
-                        usuario.Id,
-                        usuario.Nombre,
-                        usuario.Email,
-                        usuario.Telefono,
-                        usuario.Rol,
-                        usuario.Estado,
-                        usuario.FechaRegistro,
-                        token,
-                        jti,
-                        expiraEn,
-                    });
+                return Ok(await IssueAuthResponseAsync(usuario));
             }
             catch (SqliteException ex) when (ex.SqliteErrorCode == 5)
             {
@@ -137,6 +106,46 @@ namespace RutaSegura.Controllers
                             + "Cierra otras conexiones y vuelve a intentar.",
                     });
             }
+        }
+
+        private async Task<object> IssueAuthResponseAsync(Usuario usuario)
+        {
+            var (token, jti, expiraEn) = _jwtService.GenerateToken(usuario);
+            var userAgent = Request.Headers.UserAgent.ToString();
+            if (userAgent.Length > 500)
+            {
+                userAgent = userAgent.Substring(0, 500);
+            }
+
+            var sesion = new Sesion
+            {
+                UsuarioId = usuario.Id,
+                TokenJti = jti,
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
+                UserAgent = string.IsNullOrEmpty(userAgent) ? null : userAgent,
+                Origen = "web",
+                ExpiraEn = expiraEn,
+                Estado = "Activa",
+            };
+            _context.Sesiones.Add(sesion);
+            await _context.SaveChangesAsync();
+
+            await _redisService.SetStringAsync(
+                $"sesion:{jti}", usuario.Id.ToString(), expiraEn - DateTime.UtcNow);
+
+            return new
+            {
+                usuario.Id,
+                usuario.Nombre,
+                usuario.Email,
+                usuario.Telefono,
+                usuario.Rol,
+                usuario.Estado,
+                usuario.FechaRegistro,
+                token,
+                jti,
+                expiraEn,
+            };
         }
 
         /// <summary>POST <c>/api/Auth/register</c> — Crea cuenta: <c>*@usuario.com</c> o <c>*@admin.com</c> (rol según dominio).</summary>
@@ -154,18 +163,23 @@ namespace RutaSegura.Controllers
                 return BadRequest(new { message = domainError });
             }
 
+            if (!PasswordPolicy.IsValid(request.Password, out var passwordError))
+            {
+                return BadRequest(new { message = passwordError });
+            }
+
             var exists = await _context.Usuarios.AnyAsync(u => u.Email.ToLower() == emailNorm);
             if (exists)
             {
-                return Conflict(new { message = "Ya existe un usuario con ese correo electrónico." });
+                return Conflict(new { message = "El correo ya está registrado" });
             }
 
             var nuevoUsuario = new Usuario
             {
-                Nombre = request.Nombre,
+                Nombre = request.Nombre.Trim(),
                 Email = emailNorm,
                 PasswordHash = PasswordService.Hash(request.Password),
-                Telefono = request.Telefono,
+                Telefono = string.IsNullOrWhiteSpace(request.Telefono) ? null : request.Telefono.Trim(),
                 Rol = rol,
                 Estado = "Activo",
             };
@@ -173,14 +187,36 @@ namespace RutaSegura.Controllers
             _context.Usuarios.Add(nuevoUsuario);
             await _context.SaveChangesAsync();
 
+            _context.UsuarioPreferencias.Add(
+                new UsuarioPreferencias
+                {
+                    UsuarioId = nuevoUsuario.Id,
+                    EvitarZonasOscurasNoche = true,
+                    ModoMovilidadPredeterminado = "peaton",
+                    AlertasRiesgoTiempoReal = true,
+                    AvisoAutomaticoLlegada = true,
+                    ActualizadoEn = DateTime.UtcNow,
+                });
+            await _context.SaveChangesAsync();
+
             if (_redisService.IsEnabled)
                 await _redisService.RemoveAsync("usuarios:todos:v2");
 
-            var msg = rol == "Administrador"
-                ? "Cuenta de administrador creada. Inicia sesión con el correo y contraseña que registraste."
-                : "Cuenta creada. Cada persona puede usar su propio correo. Inicia sesión cuando quieras.";
-
-            return Ok(new { message = msg, rol });
+            try
+            {
+                var auth = await IssueAuthResponseAsync(nuevoUsuario);
+                return Ok(auth);
+            }
+            catch (SqliteException ex) when (ex.SqliteErrorCode == 5)
+            {
+                return StatusCode(
+                    StatusCodes.Status503ServiceUnavailable,
+                    new
+                    {
+                        message = "Cuenta creada pero la base de datos está ocupada al iniciar sesión. "
+                            + "Cierra otras conexiones e inicia sesión manualmente.",
+                    });
+            }
         }
 
         /// <summary>Cierra sesión: revoca en SQLite y elimina la clave en Redis.</summary>
@@ -213,7 +249,6 @@ namespace RutaSegura.Controllers
         public string Email { get; set; } = string.Empty;
 
         [Required]
-        [StringLength(11, MinimumLength = 8, ErrorMessage = "La contraseña debe tener entre 8 y 11 caracteres.")]
         public string Password { get; set; } = string.Empty;
     }
 
@@ -227,9 +262,9 @@ namespace RutaSegura.Controllers
         public string Email { get; set; } = string.Empty;
 
         [Required]
-        [StringLength(11, MinimumLength = 8, ErrorMessage = "La contraseña debe tener entre 8 y 11 caracteres.")]
         public string Password { get; set; } = string.Empty;
 
-        public string? Telefono { get; set; }
+        [Required]
+        public string Telefono { get; set; } = string.Empty;
     }
 }

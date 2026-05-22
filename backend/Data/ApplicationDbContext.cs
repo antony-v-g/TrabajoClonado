@@ -21,6 +21,7 @@ namespace RutaSegura.Data
         public DbSet<RutaHistorial> RutasHistorial { get; set; }
         public DbSet<ConfiguracionSistema> ConfiguracionSistema { get; set; }
         public DbSet<AlertaSistema> AlertasSistema { get; set; }
+        public DbSet<UsuarioPreferencias> UsuarioPreferencias { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -83,6 +84,16 @@ namespace RutaSegura.Data
             modelBuilder.Entity<RutaHistorial>()
                 .HasIndex(r => new { r.UsuarioId, r.CreadoEn });
 
+            modelBuilder.Entity<UsuarioPreferencias>(e =>
+            {
+                e.ToTable("UsuarioPreferencias");
+                e.HasKey(p => p.UsuarioId);
+                e.HasOne(p => p.Usuario)
+                    .WithOne()
+                    .HasForeignKey<UsuarioPreferencias>(p => p.UsuarioId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
             modelBuilder.Entity<ConfiguracionSistema>(e => e.ToTable("ConfiguracionSistema"));
             modelBuilder.Entity<ConfiguracionSistema>().HasData(
                 new ConfiguracionSistema
@@ -91,6 +102,8 @@ namespace RutaSegura.Data
                     PesoZonasOscurasPct = 40,
                     CaducidadReporteMenorHoras = 24,
                     AutoAprobarConfianzaMinPct = 85,
+                    UmbralRiesgoAlertaAltaPct = 80,
+                    UmbralRiesgoAlertaMediaPct = 50,
                     PushNotificacionUrl = "https://push.rutasegura.net",
                 });
 
@@ -132,7 +145,7 @@ namespace RutaSegura.Data
                     {
                         Nombre = "Usuario Demo",
                         Email = "demo@usuario.com",
-                        PasswordHash = PasswordService.Hash("12345678"),
+                        PasswordHash = PasswordService.Hash("RutaSegura2025!"),
                         Telefono = "+51 999 888 777",
                         Rol = "Usuario",
                         Estado = "Activo",
@@ -142,7 +155,7 @@ namespace RutaSegura.Data
                     {
                         Nombre = "Admin Demo",
                         Email = "admin@admin.com",
-                        PasswordHash = PasswordService.Hash("admin1234"),
+                        PasswordHash = PasswordService.Hash("AdminSegura2026!"),
                         Telefono = "+51 999 888 000",
                         Rol = "Administrador",
                         Estado = "Activo",
@@ -158,13 +171,13 @@ namespace RutaSegura.Data
                 var demoUser = Usuarios.FirstOrDefault(u => u.Email == "demo@usuario.com");
                 if (demoUser != null)
                 {
-                    demoUser.PasswordHash = PasswordService.Hash("12345678");
+                    demoUser.PasswordHash = PasswordService.Hash("RutaSegura2025!");
                 }
                 
                 var adminUser = Usuarios.FirstOrDefault(u => u.Email == "admin@admin.com");
                 if (adminUser != null)
                 {
-                    adminUser.PasswordHash = PasswordService.Hash("admin1234");
+                    adminUser.PasswordHash = PasswordService.Hash("AdminSegura2026!");
                 }
             }
 
@@ -204,6 +217,21 @@ namespace RutaSegura.Data
                     }
                 };
                 Reportes.AddRange(reportes);
+            }
+
+            if (demoUserId.HasValue
+                && !UsuarioPreferencias.Any(p => p.UsuarioId == demoUserId.Value))
+            {
+                UsuarioPreferencias.Add(
+                    new UsuarioPreferencias
+                    {
+                        UsuarioId = demoUserId.Value,
+                        EvitarZonasOscurasNoche = true,
+                        ModoMovilidadPredeterminado = "peaton",
+                        AlertasRiesgoTiempoReal = true,
+                        AvisoAutomaticoLlegada = true,
+                        ActualizadoEn = DateTime.UtcNow,
+                    });
             }
 
             await SaveChangesAsync();

@@ -3,7 +3,9 @@ using System.Text.Json;
 using System.Security.Authentication;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using RutaSegura.Data;
 using RutaSegura.ML;
@@ -61,6 +63,9 @@ builder.Services.AddScoped<JwtService>();
 builder.Services.AddSingleton<RedisService>();
 builder.Services.AddSingleton<MlModelTrainer>();
 builder.Services.AddSingleton<MlNetService>();
+builder.Services.AddScoped<SistemaConfigService>();
+builder.Services.AddScoped<DashboardAlertasService>();
+builder.Services.AddScoped<UsuarioPreferenciasService>();
 builder.Services.AddHostedService<MlStartupHostedService>();
 
 
@@ -132,17 +137,63 @@ app.UseCors("AllowFrontend");
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.UseDefaultFiles();
-app.UseStaticFiles();
-app.MapFallbackToFile("index.html");
+var webRootPath = RutaSegura.WwwrootPath.Resolve();
+var webRootProvider = new PhysicalFileProvider(webRootPath);
+
+var buildIdPath = Path.Combine(webRootPath, "build-id.txt");
+var buildId = File.Exists(buildIdPath) ? File.ReadAllText(buildIdPath).Trim() : "(sin build)";
+app.Logger.LogInformation(
+    "Sirviendo wwwroot desde {WebRoot}. Build UI: {BuildId}. ContentRoot={ContentRoot}",
+    webRootPath,
+    buildId,
+    app.Environment.ContentRootPath);
+
+void DisableCaching(StaticFileResponseContext ctx)
+{
+    ctx.Context.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+    ctx.Context.Response.Headers.Pragma = "no-cache";
+    ctx.Context.Response.Headers.Expires = "0";
+}
+
+var staticFileOptions = new StaticFileOptions
+{
+    FileProvider = webRootProvider,
+    RequestPath = "",
+};
+if (app.Environment.IsDevelopment())
+    staticFileOptions.OnPrepareResponse = DisableCaching;
+
+var fallbackOptions = new StaticFileOptions
+{
+    FileProvider = webRootProvider,
+    RequestPath = "",
+};
+if (app.Environment.IsDevelopment())
+    fallbackOptions.OnPrepareResponse = DisableCaching;
 
 app.MapControllers();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapGet("/api/dev/build-id", () =>
+    {
+        var path = Path.Combine(webRootPath, "build-id.txt");
+        if (!File.Exists(path))
+            return Results.NotFound("Sin build-id.txt. Ejecuta npm run build en la raíz.");
+        return Results.Text(File.ReadAllText(path).Trim(), "text/plain");
+    }).AllowAnonymous();
+}
+
+app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = webRootProvider });
+app.UseStaticFiles(staticFileOptions);
+app.MapFallbackToFile("index.html", fallbackOptions);
 
 // Inicializar base de datos y seeding
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     await context.Database.MigrateAsync();
+    await ConfiguracionSchemaBootstrap.EnsureAlertasUmbralColumnsAsync(context);
     await context.SeedDataAsync();
 }
 

@@ -5,8 +5,11 @@ namespace RutaSegura.Services;
 public class RedisService
 {
     private readonly IDatabase? _database;
-    private readonly bool _enabled;
+    private readonly IConnectionMultiplexer? _multiplexer;
+    private readonly bool _configured;
+    private volatile bool _operational;
     private readonly ILogger<RedisService> _logger;
+    private readonly object _disableLock = new();
 
     public RedisService(IConfiguration configuration, ILogger<RedisService> logger)
     {
@@ -15,38 +18,51 @@ public class RedisService
 
         if (string.IsNullOrWhiteSpace(connectionString))
         {
-            _logger.LogWarning("Redis deshabilitado: falta Redis:ConnectionString");
-            _enabled = false;
+            _logger.LogWarning(
+                "Redis deshabilitado: falta Redis:ConnectionString. La app usará solo SQLite.");
+            _configured = false;
+            _operational = false;
             return;
         }
+
+        _configured = true;
 
         try
         {
             var options = ConfigurationOptions.Parse(connectionString);
-            options.AbortOnConnectFail = false;
-            options.ConnectTimeout = 10000;
+            var isLocal = IsLocalEndpoint(options);
+            options.AbortOnConnectFail = isLocal;
+            options.ConnectTimeout = isLocal ? 2500 : 10000;
+            options.SyncTimeout = isLocal ? 2500 : 5000;
+            options.AsyncTimeout = isLocal ? 2500 : 5000;
             options.Ssl = options.Ssl || LooksLikeRedisCloud(options);
 
             var redis = ConnectionMultiplexer.Connect(options);
-            _database = redis.GetDatabase();
-            _enabled = true;
+            var db = redis.GetDatabase();
+            var pingMs = db.Ping().TotalMilliseconds;
+
+            _multiplexer = redis;
+            _database = db;
+            _operational = true;
             _logger.LogInformation(
-                "Redis conectado ({Host})",
-                options.EndPoints.FirstOrDefault()?.ToString() ?? "redis");
+                "Redis operativo ({Host}, ping {PingMs:F0} ms)",
+                options.EndPoints.FirstOrDefault()?.ToString() ?? "redis",
+                pingMs);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "No se pudo conectar a Redis");
-            _enabled = false;
+            _operational = false;
+            _logger.LogWarning(
+                ex,
+                "Redis no disponible en este equipo. La app seguirá con SQLite (sin caché). "
+                    + "Para activarlo: inicia Redis en localhost:6379 (Docker: docker run -d -p 6379:6379 redis) "
+                    + "o vacía Redis:ConnectionString en appsettings.Development.json.");
         }
     }
 
-    public bool IsEnabled => _enabled;
+    /// <summary>Redis configurado y respondiendo ping.</summary>
+    public bool IsEnabled => _configured && _operational;
 
-    /// <summary>
-    /// Acepta: localhost:6379, redis://user:pass@host:port, host:port,password=x,ssl=True
-    /// o solo host:port + Redis:Password (Redis Cloud / Redis Labs).
-    /// </summary>
     internal static string BuildConnectionString(IConfiguration configuration)
     {
         var raw = configuration["Redis:ConnectionString"]?.Trim();
@@ -74,12 +90,31 @@ public class RedisService
                     parts.Add($"password={password}");
                 if (isCloud)
                     parts.Add("ssl=True");
-                parts.Add("abortConnect=false");
+                if (!isCloud)
+                    parts.Add("abortConnect=true");
                 return string.Join(',', parts);
             }
         }
 
+        if (raw.StartsWith("localhost", StringComparison.OrdinalIgnoreCase)
+            || raw.StartsWith("127.0.0.1", StringComparison.OrdinalIgnoreCase))
+        {
+            return raw.Contains(',') ? raw : $"{raw},abortConnect=true";
+        }
+
         return raw;
+    }
+
+    private static bool IsLocalEndpoint(ConfigurationOptions options)
+    {
+        foreach (var ep in options.EndPoints)
+        {
+            var s = ep.ToString() ?? "";
+            if (s.StartsWith("localhost", StringComparison.OrdinalIgnoreCase)
+                || s.StartsWith("127.0.0.1", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     private static bool LooksLikeRedisCloud(ConfigurationOptions options)
@@ -93,9 +128,32 @@ public class RedisService
         return false;
     }
 
+    private void DisableAfterFailure(Exception ex, string operation, string key)
+    {
+        lock (_disableLock)
+        {
+            if (!_operational) return;
+            _operational = false;
+            _logger.LogWarning(
+                ex,
+                "Redis dejó de responder ({Operation} {Key}). Caché desactivada; usando SQLite.",
+                operation,
+                key);
+        }
+
+        try
+        {
+            _multiplexer?.Dispose();
+        }
+        catch
+        {
+            /* ignore */
+        }
+    }
+
     public async Task SetStringAsync(string key, string value, TimeSpan? ttl = null)
     {
-        if (!_enabled || _database is null) return;
+        if (!IsEnabled || _database is null) return;
 
         try
         {
@@ -103,13 +161,13 @@ public class RedisService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis SET falló ({Key})", key);
+            DisableAfterFailure(ex, "SET", key);
         }
     }
 
     public async Task<string?> GetStringAsync(string key)
     {
-        if (!_enabled || _database is null) return null;
+        if (!IsEnabled || _database is null) return null;
 
         try
         {
@@ -118,7 +176,7 @@ public class RedisService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis GET falló ({Key})", key);
+            DisableAfterFailure(ex, "GET", key);
         }
 
         return null;
@@ -126,7 +184,7 @@ public class RedisService
 
     public async Task RemoveAsync(string key)
     {
-        if (!_enabled || _database is null) return;
+        if (!IsEnabled || _database is null) return;
 
         try
         {
@@ -134,7 +192,7 @@ public class RedisService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis REMOVE falló ({Key})", key);
+            DisableAfterFailure(ex, "REMOVE", key);
         }
     }
 }

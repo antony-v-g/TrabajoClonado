@@ -1,10 +1,8 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ShieldCheck,
   Mail,
-  Lock,
   User,
-  Phone,
   ArrowRight,
   Activity,
   Map,
@@ -15,7 +13,17 @@ import {
 } from "lucide-react";
 import { useNavigate, Link } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
-import { EMAIL_DOMAIN_HINT, isAllowedProjectEmail } from "../lib/emailRules";
+import {
+  detectRolFromEmail,
+  dashboardPathForRol,
+  isAllowedProjectEmail,
+  MSG_EMAIL_INVALID,
+  MSG_EMPTY_FIELDS,
+  MSG_LOGIN_SUCCESS,
+  MSG_USER_NOT_FOUND,
+  MSG_WRONG_PASSWORD,
+} from "../lib/emailRules";
+import PasswordInput from "../components/PasswordInput";
 
 export default function Auth() {
   const [viewState, setViewState] = useState<
@@ -25,16 +33,36 @@ export default function Auth() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [credentialsReady, setCredentialsReady] = useState(false);
   const navigate = useNavigate();
   const { login } = useAuth();
+
+  const detectedRol = useMemo(() => detectRolFromEmail(email), [email]);
 
   const view = viewState;
   const setView = (v: typeof view) => {
     setViewState(v);
     setResetSent(false);
     setErrorMessage(null);
+    setSuccessMessage(null);
+    setEmail("");
+    setPassword("");
+    setCredentialsReady(false);
   };
+
+  useEffect(() => {
+    if (view !== "login" && view !== "adminLogin") {
+      setCredentialsReady(false);
+      return;
+    }
+    setEmail("");
+    setPassword("");
+    setCredentialsReady(false);
+    const id = window.setTimeout(() => setCredentialsReady(true), 400);
+    return () => window.clearTimeout(id);
+  }, [view]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,31 +76,43 @@ export default function Auth() {
       return;
     }
 
-    if (password.length < 8 || password.length > 11) {
-      setErrorMessage("La contraseña debe tener entre 8 y 11 caracteres.");
+    if (!email.trim() || !password.trim()) {
+      setErrorMessage(MSG_EMPTY_FIELDS);
       return;
     }
 
     if (!isAllowedProjectEmail(email)) {
-      setErrorMessage(EMAIL_DOMAIN_HINT);
+      setErrorMessage(MSG_EMAIL_INVALID);
       return;
     }
 
     setIsSubmitting(true);
     setErrorMessage(null);
+    setSuccessMessage(null);
 
     try {
-      const user = await login(email, password);
-      if (user.rol === "Administrador" || view === "adminLogin") {
-        navigate("/admin/dashboard");
-      } else {
-        navigate("/home");
-      }
+      const user = await login(email.trim(), password);
+      setSuccessMessage(MSG_LOGIN_SUCCESS);
+      const target = dashboardPathForRol(user.rol);
+      setTimeout(() => navigate(target), 1200);
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "No se pudo iniciar sesión.",
-      );
-    } finally {
+      let errorMsg = "No se pudo iniciar sesión.";
+      if (error instanceof Error) {
+        errorMsg = error.message;
+        if (
+          !errorMsg.startsWith("⚠️") &&
+          errorMsg.toLowerCase().includes("no registrado")
+        ) {
+          errorMsg = MSG_USER_NOT_FOUND;
+        }
+        if (
+          !errorMsg.startsWith("⚠️") &&
+          errorMsg.toLowerCase().includes("contraseña")
+        ) {
+          errorMsg = MSG_WRONG_PASSWORD;
+        }
+      }
+      setErrorMessage(errorMsg);
       setIsSubmitting(false);
     }
   };
@@ -424,71 +464,113 @@ export default function Auth() {
               </div>
             </div>
           ) : (
-            <form className="space-y-6" onSubmit={handleLogin}>
+            <form
+              className="relative space-y-6"
+              onSubmit={handleLogin}
+              autoComplete="off"
+              data-form-type="other"
+            >
+              <div
+                className="pointer-events-none absolute -left-[9999px] h-0 w-0 overflow-hidden"
+                aria-hidden
+              >
+                <input type="text" name="fake-email" autoComplete="username" />
+                <input
+                  type="password"
+                  name="fake-password"
+                  autoComplete="current-password"
+                />
+              </div>
               {errorMessage && (
                 <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                   {errorMessage}
+                </div>
+              )}
+              {successMessage && (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                  {successMessage}
                 </div>
               )}
               <div>
                 <label className="block text-sm font-bold text-slate-700">
                   Correo Electrónico
                 </label>
-                {view === "adminLogin" ? (
-                  <p className="mt-1 text-xs text-slate-500">
-                    Usa un correo con dominio{" "}
-                    <code className="text-slate-600">@admin.com</code>, p. ej.{" "}
-                    <code>maria@admin.com</code>.
+                {view === "recuperar" ? (
+                  <div className="mt-1 relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Mail className="h-5 w-5 text-slate-400" />
+                    </div>
+                    <input
+                      id="login-correo-recuperar"
+                      name="correo-recuperar"
+                      type="text"
+                      inputMode="email"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      autoComplete="off"
+                      data-lpignore="true"
+                      data-1p-ignore="true"
+                      data-form-type="other"
+                      className="pl-10 block w-full border-slate-200 bg-slate-50 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 py-3"
+                      placeholder="tu@usuario.com"
+                    />
+                  </div>
+                ) : !credentialsReady ? (
+                  <p className="mt-3 text-sm text-slate-400 animate-pulse py-4 text-center">
+                    Preparando acceso seguro…
                   </p>
                 ) : (
-                  view === "login" && (
-                    <p className="mt-1 text-xs text-slate-500">
-                      Cuenta de app: <code className="text-slate-600">@usuario.com</code>{" "}
-                      (ej. <code>luciana@usuario.com</code>). Pestaña Admin:{" "}
-                      <code>@admin.com</code>.
-                    </p>
-                  )
+                  <>
+                    <div className="mt-1 relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Mail className="h-5 w-5 text-slate-400" />
+                      </div>
+                      <input
+                        id="login-correo"
+                        name="correo-login"
+                        type="text"
+                        inputMode="email"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        value={email}
+                        onChange={(event) => setEmail(event.target.value)}
+                        autoComplete="off"
+                        data-lpignore="true"
+                        data-1p-ignore="true"
+                        data-form-type="other"
+                        className="pl-10 block w-full border-slate-200 bg-slate-50 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 py-3"
+                        placeholder={
+                          view === "adminLogin"
+                            ? "tuNombre@admin.com"
+                            : "tuNombre@usuario.com"
+                        }
+                      />
+                    </div>
+                    {detectedRol && (
+                      <p className="mt-2 text-sm font-medium text-emerald-600">
+                        Rol detectado: {detectedRol}
+                      </p>
+                    )}
+                  </>
                 )}
-                <div className="mt-1 relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Mail className="h-5 w-5 text-slate-400" />
-                  </div>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    required
-                    className="pl-10 block w-full border-slate-200 bg-slate-50 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 py-3"
-                    placeholder={
-                      view === "adminLogin"
-                        ? "tuNombre@admin.com"
-                        : "tuNombre@usuario.com"
-                    }
-                  />
-                </div>
               </div>
 
-              {view !== "recuperar" && (
+              {view !== "recuperar" && credentialsReady && (
                 <div>
                   <label className="block text-sm font-bold text-slate-700">
                     Contraseña
                   </label>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Entre 8 y 11 caracteres.
-                  </p>
-                  <div className="mt-1 relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <Lock className="h-5 w-5 text-slate-400" />
-                    </div>
-                    <input
-                      type="password"
+                  <div className="mt-1">
+                    <PasswordInput
+                      id="login-password"
+                      name="password-login"
                       value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      required
-                      minLength={8}
-                      maxLength={11}
-                      className="pl-10 block w-full border-slate-200 bg-slate-50 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 py-3"
-                      placeholder="8-11 caracteres, ej. Abcd1234"
+                      onChange={setPassword}
+                      preventAutofill
+                      variant="light"
+                      placeholder="Tu contraseña"
                     />
                   </div>
                 </div>
@@ -525,17 +607,26 @@ export default function Auth() {
               <div>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !!successMessage}
                   className={`w-full flex justify-center items-center gap-2 py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-offset-2 ${
                     view === "adminLogin"
                       ? "bg-slate-900 hover:bg-slate-800 focus:ring-slate-900"
                       : "bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500"
-                  } ${isSubmitting ? "opacity-70 cursor-not-allowed" : ""}`}
+                  } ${isSubmitting || successMessage ? "opacity-70 cursor-not-allowed" : ""}`}
                 >
-                  {view === "login" && "Ingresar al sistema"}
-                  {view === "adminLogin" && "Ingresar como Administrador"}
-                  {view === "recuperar" && "Enviar enlace de recuperación"}
-                  <ArrowRight className="w-4 h-4" />
+                  {isSubmitting &&
+                    (view === "login" || view === "adminLogin") &&
+                    "Iniciando sesión..."}
+                  {!isSubmitting && view === "login" && "Ingresar al sistema"}
+                  {!isSubmitting &&
+                    view === "adminLogin" &&
+                    "Ingresar como Administrador"}
+                  {!isSubmitting &&
+                    view === "recuperar" &&
+                    "Enviar enlace de recuperación"}
+                  {!isSubmitting && (
+                    <ArrowRight className="w-4 h-4" />
+                  )}
                 </button>
               </div>
 

@@ -122,6 +122,12 @@ namespace RutaSegura.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("UmbralRiesgoAlertaAltaPct")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("UmbralRiesgoAlertaMediaPct")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.ToTable("ConfiguracionSistema", (string)null);
@@ -133,7 +139,9 @@ namespace RutaSegura.Migrations
                             AutoAprobarConfianzaMinPct = 85,
                             CaducidadReporteMenorHoras = 24,
                             PesoZonasOscurasPct = 40,
-                            PushNotificacionUrl = "https://push.rutasegura.net"
+                            PushNotificacionUrl = "https://push.rutasegura.net",
+                            UmbralRiesgoAlertaAltaPct = 80,
+                            UmbralRiesgoAlertaMediaPct = 50
                         });
                 });
 
@@ -456,6 +464,33 @@ namespace RutaSegura.Migrations
                     b.ToTable("Usuarios");
                 });
 
+            modelBuilder.Entity("RutaSegura.Models.UsuarioPreferencias", b =>
+                {
+                    b.Property<int>("UsuarioId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("ActualizadoEn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("AlertasRiesgoTiempoReal")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("AvisoAutomaticoLlegada")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("EvitarZonasOscurasNoche")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ModoMovilidadPredeterminado")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("UsuarioId");
+
+                    b.ToTable("UsuarioPreferencias", (string)null);
+                });
+
             modelBuilder.Entity("RutaSegura.Models.Contacto", b =>
                 {
                     b.HasOne("RutaSegura.Models.Usuario", "Usuario")
@@ -519,6 +554,17 @@ namespace RutaSegura.Migrations
                     b.HasOne("RutaSegura.Models.Usuario", "Usuario")
                         .WithMany("UbicacionesGuardadas")
                         .HasForeignKey("UsuarioId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Usuario");
+                });
+
+            modelBuilder.Entity("RutaSegura.Models.UsuarioPreferencias", b =>
+                {
+                    b.HasOne("RutaSegura.Models.Usuario", "Usuario")
+                        .WithOne()
+                        .HasForeignKey("RutaSegura.Models.UsuarioPreferencias", "UsuarioId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 

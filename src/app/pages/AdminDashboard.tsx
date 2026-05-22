@@ -8,8 +8,12 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from "recharts";
+import { Link } from "react-router";
 import { Users, AlertTriangle, MapPin, Bell, RefreshCw } from "lucide-react";
-import { apiUrl, readApiErrorMessage } from "../lib/api";
+import { apiUrl, authJsonHeaders, readApiErrorMessage } from "../lib/api";
+import { useAuth } from "../contexts/AuthContext";
+import { adminFetchJson } from "../lib/adminApi";
+import { AdminPageHeader } from "../components/AdminPageHeader";
 
 type ResumenApi = {
   usuariosActivos: number;
@@ -28,7 +32,11 @@ type ResumenApi = {
     titulo: string;
     riesgoPorcentaje: number;
     horarioSugerido: string;
+    nivelZonaMl?: string;
+    indicadorZona?: string;
+    reportesEnZona?: number;
   }[];
+  mlZonasActivo?: boolean;
 };
 
 function formatDelta(pct: number) {
@@ -44,6 +52,7 @@ function barColor(pct: number) {
 }
 
 export default function AdminDashboard() {
+  const { token } = useAuth();
   const [data, setData] = useState<ResumenApi | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -51,18 +60,14 @@ export default function AdminDashboard() {
   const [genLoading, setGenLoading] = useState(false);
 
   const load = useCallback(async () => {
+    if (!token) return;
     setLoading(true);
     setErr(null);
     try {
-      const r = await fetch(apiUrl("/api/Admin/resumen"));
-      if (!r.ok) {
-        const msg = await readApiErrorMessage(
-          r,
-          "El servidor no devolvió el resumen.",
-        );
-        throw new Error(msg);
-      }
-      const j = (await r.json()) as ResumenApi;
+      const { data: j } = await adminFetchJson<ResumenApi>(
+        "/api/Admin/resumen",
+        token,
+      );
       setData(j);
     } catch (e) {
       if (e instanceof TypeError) {
@@ -78,10 +83,10 @@ export default function AdminDashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [token]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   const chartData =
@@ -92,20 +97,22 @@ export default function AdminDashboard() {
     }) ?? [];
 
   const onGenerar = async () => {
+    if (!token) return;
     setGenLoading(true);
     setGenMsg(null);
     try {
       const r = await fetch(apiUrl("/api/Admin/alertas/generar"), {
         method: "POST",
+        headers: authJsonHeaders(token),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.message || "Error");
       setGenMsg(
         typeof j.creadas === "number" && j.creadas > 0
-          ? `Se generaron ${j.creadas} alertas y se guardaron en la base.`
+          ? `Se generaron ${j.creadas} alertas y se guardaron en el sistema.`
           : (j.message as string) || "Listo.",
       );
-      load();
+      void load();
     } catch {
       setGenMsg("No se pudo generar alertas (comprueba que haya reportes en los últimos 7 días).");
     } finally {
@@ -168,17 +175,10 @@ export default function AdminDashboard() {
           {genMsg}
         </div>
       ) : null}
-      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-3xl font-black text-slate-900">
-            Dashboard Administrativo
-          </h1>
-          <p className="mt-2 text-slate-500">
-            Resumen con datos reales (SQLite) y análisis por reportes
-            recientes.
-          </p>
-        </div>
-      </div>
+      <AdminPageHeader
+        title="Dashboard Administrativo"
+        subtitle="Resumen de zonas de riesgo y actividad reciente de la plataforma."
+      />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -213,6 +213,14 @@ export default function AdminDashboard() {
             {data.reportesPendientes}
           </h3>
           <p className="mt-2 text-sm text-slate-500">Reportes pendientes</p>
+          {data.reportesPendientes > 0 ? (
+            <Link
+              to="/admin/reportes"
+              className="mt-2 inline-block text-xs font-bold text-indigo-600 hover:text-indigo-700"
+            >
+              Moderar →
+            </Link>
+          ) : null}
         </div>
 
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -313,8 +321,9 @@ export default function AdminDashboard() {
             <div>
               <h2 className="text-xl font-black">Zonas con más reportes</h2>
               <p className="mt-1 text-sm text-slate-300">
-                Resumen agregado por <strong>texto de ubicación</strong> (últimos
-                7 días). Indicador orientativo según frecuencia de reportes.
+                Ranking por ubicación (7 días) con nivel predictivo de seguridad
+                de zona.
+                {data.mlZonasActivo ? " Modelo de zona activo." : ""}
               </p>
             </div>
             <MapPin className="w-6 h-6 text-indigo-400" />
@@ -333,7 +342,20 @@ export default function AdminDashboard() {
                 >
                   <div className="flex items-center justify-between gap-4">
                     <div>
-                      <h3 className="font-bold text-slate-100">{item.titulo}</h3>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {item.indicadorZona ? (
+                          <span aria-hidden>{item.indicadorZona}</span>
+                        ) : null}
+                        <h3 className="font-bold text-slate-100">{item.titulo}</h3>
+                      </div>
+                      {item.nivelZonaMl ? (
+                        <p className="mt-1 text-xs font-bold text-indigo-300">
+                          {item.nivelZonaMl}
+                          {item.reportesEnZona != null
+                            ? ` · ${item.reportesEnZona} reporte(s)`
+                            : ""}
+                        </p>
+                      ) : null}
                       <p className="mt-1 text-xs text-slate-400">
                         {item.horarioSugerido}
                       </p>

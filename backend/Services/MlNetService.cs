@@ -14,8 +14,15 @@ public class MlNetService
 
     private PredictionEngine<IncidentTrainingRow, IncidentPredictionOutput>? _classifier;
     private PredictionEngine<RouteRecommendationInput, RouteRecommendationOutput>? _recommender;
+    private PredictionEngine<ZoneSafetyTrainingRow, ZoneSafetyPredictionOutput>? _zoneSafety;
     private MLContext? _ml;
     private string[] _incidentLabels = ["Robo", "Asalto", "Accidente", "ZonaOscura", "Otro"];
+    private string[] _zoneLabels =
+    [
+        ZoneSafetyPresentation.Segura,
+        ZoneSafetyPresentation.Moderada,
+        ZoneSafetyPresentation.Peligrosa,
+    ];
 
     public MlNetService(
         MlModelTrainer trainer,
@@ -29,10 +36,11 @@ public class MlNetService
 
     public bool ClassifierReady => File.Exists(_trainer.ClassifierPath);
     public bool RecommenderReady => File.Exists(_trainer.RecommenderPath);
+    public bool ZoneSafetyReady => File.Exists(_trainer.ZoneSafetyPath);
 
     public async Task EnsureModelsAsync(CancellationToken ct = default)
     {
-        if (!ClassifierReady || !RecommenderReady)
+        if (!ClassifierReady || !RecommenderReady || !ZoneSafetyReady)
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -49,8 +57,10 @@ public class MlNetService
             _ml = new MLContext();
             _classifier?.Dispose();
             _recommender?.Dispose();
+            _zoneSafety?.Dispose();
             _classifier = null;
             _recommender = null;
+            _zoneSafety = null;
 
             if (File.Exists(_trainer.ClassifierPath))
             {
@@ -81,7 +91,80 @@ public class MlNetService
                     _logger.LogError(ex, "No se pudo cargar el recomendador ML.NET");
                 }
             }
+
+            if (File.Exists(_trainer.ZoneSafetyPath))
+            {
+                try
+                {
+                    var model = _ml.Model.Load(_trainer.ZoneSafetyPath, out _);
+                    _zoneSafety = _ml.Model.CreatePredictionEngine<
+                        ZoneSafetyTrainingRow,
+                        ZoneSafetyPredictionOutput>(model);
+                    _logger.LogInformation("Clasificador de seguridad de zona ML.NET cargado");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "No se pudo cargar el clasificador de zona ML.NET");
+                }
+            }
         }
+    }
+
+    public ZoneSafetyResult ClassifyZoneSafety(
+        float cantidadReportes,
+        float trafico,
+        float iluminacion,
+        float hora)
+    {
+        var input = new ZoneSafetyTrainingRow
+        {
+            Label = ZoneSafetyPresentation.Segura,
+            CantidadReportes = Math.Clamp(cantidadReportes, 0f, 1f),
+            Trafico = Math.Clamp(trafico, 0f, 1f),
+            Iluminacion = Math.Clamp(iluminacion, 0f, 1f),
+            Hora = Math.Clamp(hora, 0f, 23.99f),
+        };
+
+        if (_zoneSafety != null)
+        {
+            var pred = _zoneSafety.Predict(input);
+            var scores = BuildZoneScoreMap(pred);
+            var nivel = ZoneSafetyPresentation.Normalize(pred.PredictedLabel);
+            var conf = scores.TryGetValue(nivel, out var c) ? c * 100.0 : 75.0;
+            return new ZoneSafetyResult(nivel, Math.Round(conf, 1));
+        }
+
+        return ClassifyZoneSafetyHeuristic(input);
+    }
+
+    private ZoneSafetyResult ClassifyZoneSafetyHeuristic(ZoneSafetyTrainingRow input)
+    {
+        var riesgo =
+            input.CantidadReportes * 0.42f
+            + input.Trafico * 0.22f
+            + (1f - input.Iluminacion) * 0.28f
+            + (input.Hora >= 19f || input.Hora < 6f ? 0.12f : 0f);
+        var nivel = riesgo >= 0.62f
+            ? ZoneSafetyPresentation.Peligrosa
+            : riesgo >= 0.38f
+                ? ZoneSafetyPresentation.Moderada
+                : ZoneSafetyPresentation.Segura;
+        return new ZoneSafetyResult(nivel, Math.Round(riesgo * 100, 1));
+    }
+
+    private Dictionary<string, float> BuildZoneScoreMap(ZoneSafetyPredictionOutput pred)
+    {
+        var map = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+        if (pred.Score == null || pred.Score.Length == 0)
+        {
+            map[pred.PredictedLabel] = 0.75f;
+            return map;
+        }
+
+        for (var i = 0; i < Math.Min(pred.Score.Length, _zoneLabels.Length); i++)
+            map[_zoneLabels[i]] = pred.Score[i];
+
+        return map;
     }
 
     public IncidentClassificationResult? ClassifyIncident(
@@ -160,8 +243,10 @@ public class MlNetService
         return new MlStatusDto(
             ClassifierReady,
             RecommenderReady,
+            ZoneSafetyReady,
             _trainer.ClassifierPath,
             _trainer.RecommenderPath,
+            _trainer.ZoneSafetyPath,
             reportes,
             rutas,
             _incidentLabels);
@@ -208,8 +293,10 @@ public record RouteRecommendationResult(
 public record MlStatusDto(
     bool ClasificacionLista,
     bool RecomendacionLista,
+    bool SeguridadZonaLista,
     string RutaClasificador,
     string RutaRecomendador,
+    string RutaSeguridadZona,
     int ReportesEnBd,
     int RutasEnBd,
     string[] TiposIncidente);

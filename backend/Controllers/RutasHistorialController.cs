@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RutaSegura.Data;
 using RutaSegura.Models;
+using RutaSegura.Services;
 
 namespace RutaSegura.Controllers
 {
@@ -14,11 +15,13 @@ namespace RutaSegura.Controllers
     public class RutasHistorialController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
+        private readonly RedisService _redis;
         private const int MaxList = 80;
 
-        public RutasHistorialController(ApplicationDbContext context)
+        public RutasHistorialController(ApplicationDbContext context, RedisService redis)
         {
             _context = context;
+            _redis = redis;
         }
 
         private int GetUserId()
@@ -87,6 +90,8 @@ namespace RutaSegura.Controllers
             };
             _context.RutasHistorial.Add(r);
             await _context.SaveChangesAsync();
+            if (_redis.IsEnabled)
+                await _redis.RemoveAsync(DashboardCacheKeys.Lugares(id));
             return Ok(new
             {
                 r.Id,
@@ -109,6 +114,8 @@ namespace RutaSegura.Controllers
             if (r is null) return NotFound();
             _context.RutasHistorial.Remove(r);
             await _context.SaveChangesAsync();
+            if (_redis.IsEnabled)
+                await _redis.RemoveAsync(DashboardCacheKeys.Lugares(userId));
             return NoContent();
         }
     }

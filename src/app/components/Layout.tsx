@@ -12,7 +12,7 @@ import {
   Settings,
   Brain,
 } from "lucide-react";
-import { Outlet, NavLink, useNavigate, useLocation } from "react-router";
+import { Outlet, NavLink, useNavigate, useLocation, Link } from "react-router";
 import { SafeBot } from "./SafeBot";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -20,7 +20,15 @@ export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, isAdmin: isUserAdmin, logout } = useAuth();
-  const isAdmin = location.pathname.startsWith("/admin") || isUserAdmin;
+  const isAdminRoute = location.pathname.startsWith("/admin");
+  /** Menú admin solo en rutas /admin/*; en /home y /mapa se muestra la app usuario. */
+  const showAdminChrome = isAdminRoute;
+  const vistaPreviaUsuario = Boolean(user && isUserAdmin && !isAdminRoute);
+
+  const cerrarSesion = () => {
+    logout();
+    navigate("/", { replace: true });
+  };
 
   // Si estamos en auth, no mostramos el layout
   if (location.pathname === "/") {
@@ -41,7 +49,7 @@ export default function Layout() {
     { name: "Gestión Usuarios", path: "/admin/usuarios", icon: Users },
     { name: "Mapa de Calor", path: "/admin/mapa-calor", icon: MapPin },
     { name: "Alertas", path: "/admin/alertas", icon: Bell },
-    { name: "ML .NET", path: "/admin/ml", icon: Brain },
+    { name: "Motor predictivo", path: "/admin/ml", icon: Brain },
     { name: "Configuración", path: "/admin/configuracion", icon: Settings },
   ];
 
@@ -50,7 +58,7 @@ export default function Layout() {
     { name: "Registrarse", path: "/registro", icon: User },
   ];
 
-  const navItems = user ? (isAdmin ? adminNav : userNav) : publicNav;
+  const navItems = user ? (showAdminChrome ? adminNav : userNav) : publicNav;
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden text-slate-900">
@@ -58,11 +66,11 @@ export default function Layout() {
       <aside className="hidden md:flex flex-col w-64 bg-white border-r border-slate-200 z-50">
         <div className="p-6 flex items-center gap-3 text-indigo-700 font-black text-xl border-b border-slate-100">
           <div
-            className={`p-2 rounded-xl text-white ${isAdmin ? "bg-slate-900" : "bg-indigo-600"}`}
+            className={`p-2 rounded-xl text-white ${showAdminChrome ? "bg-slate-900" : "bg-indigo-600"}`}
           >
             <ShieldCheck className="w-6 h-6" />
           </div>
-          <span>{isAdmin ? "Admin Panel" : "Ruta Segura"}</span>
+          <span>{showAdminChrome ? "Admin Panel" : "Ruta Segura"}</span>
         </div>
         <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
           {navItems.map((item) => (
@@ -72,7 +80,7 @@ export default function Layout() {
               className={({ isActive }) =>
                 `flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all ${
                   isActive
-                    ? isAdmin
+                    ? showAdminChrome
                       ? "bg-slate-100 text-slate-900 font-bold"
                       : "bg-indigo-50 text-indigo-700 font-bold"
                     : "text-slate-600 hover:bg-slate-100 font-medium"
@@ -87,10 +95,8 @@ export default function Layout() {
         <div className="p-4 border-t border-slate-100">
           {user ? (
             <button
-              onClick={() => {
-                logout();
-                navigate("/");
-              }}
+              type="button"
+              onClick={cerrarSesion}
               className="w-full flex items-center justify-center gap-2 p-3 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl cursor-pointer transition-colors font-bold text-sm"
             >
               Cerrar Sesión
@@ -120,14 +126,13 @@ export default function Layout() {
         <div className="md:hidden bg-white p-4 border-b border-slate-200 flex justify-between items-center z-50 sticky top-0 shadow-sm">
           <div className="flex items-center gap-2 text-indigo-700 font-black">
             <ShieldCheck className="w-5 h-5" />
-            <span>{isAdmin ? "Admin Panel" : "Ruta Segura"}</span>
+            <span>{showAdminChrome ? "Admin Panel" : "Ruta Segura"}</span>
           </div>
           <button
+            type="button"
             onClick={() => {
-              if (user) {
-                logout();
-              }
-              navigate("/");
+              if (user) cerrarSesion();
+              else navigate("/", { replace: true });
             }}
             className="bg-slate-100 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700"
           >
@@ -136,6 +141,20 @@ export default function Layout() {
         </div>
 
         <div className="max-w-6xl mx-auto p-4 md:p-8 min-h-full">
+          {vistaPreviaUsuario ? (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+              <span>
+                <strong>Vista previa usuario</strong> — así ven Inicio/Mapa las
+                reglas operativas.
+              </span>
+              <Link
+                to="/admin/configuracion"
+                className="font-bold text-indigo-700 hover:underline shrink-0"
+              >
+                ← Volver a configuración
+              </Link>
+            </div>
+          ) : null}
           <Outlet />
         </div>
       </main>
@@ -149,7 +168,7 @@ export default function Layout() {
             className={({ isActive }) =>
               `flex flex-col items-center justify-center gap-1 p-2 rounded-xl min-w-[70px] transition-all ${
                 isActive
-                  ? isAdmin
+                  ? showAdminChrome
                     ? "text-slate-900 bg-slate-100"
                     : "text-indigo-700 bg-indigo-50"
                   : "text-slate-400 hover:text-slate-600"
@@ -165,7 +184,7 @@ export default function Layout() {
       </nav>
 
       {/* Chatbot solo en vista usuario */}
-      {!isAdmin && <SafeBot />}
+      {!showAdminChrome && user && <SafeBot />}
     </div>
   );
 }

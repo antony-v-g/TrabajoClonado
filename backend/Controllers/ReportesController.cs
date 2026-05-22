@@ -28,6 +28,7 @@ namespace RutaSegura.Controllers
             _ml = ml;
         }
 
+        [Authorize(Roles = "Administrador")]
         [HttpGet]
         public async Task<IActionResult> GetReportes()
         {
@@ -174,6 +175,7 @@ namespace RutaSegura.Controllers
             return Ok(reportes);
         }
 
+        [Authorize(Roles = "Administrador")]
         [HttpPost("Aprobar/{id}")]
         public async Task<IActionResult> Aprobar(int id)
         {
@@ -188,6 +190,7 @@ namespace RutaSegura.Controllers
             return Ok(new { success = true, message = "Reporte aprobado correctamente." });
         }
 
+        [Authorize(Roles = "Administrador")]
         [HttpPost("Rechazar/{id}")]
         public async Task<IActionResult> Rechazar(int id)
         {
@@ -302,6 +305,12 @@ namespace RutaSegura.Controllers
             }
 
             await _redis.RemoveAsync("reportes:recientes:v3:8:30");
+            await DashboardAlertasService.InvalidateAlertasCacheAsync(_redis);
+
+            for (var take = 1; take <= 100; take++)
+                await _redis.RemoveAsync($"mapa:incidentes:v1:30:{take}");
+
+            await AdminCacheKeys.InvalidateAllAsync(_redis);
         }
     }
 }

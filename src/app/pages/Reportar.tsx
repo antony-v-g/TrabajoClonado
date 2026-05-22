@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router";
 import {
   Camera,
   MapPin,
@@ -67,6 +68,7 @@ const incidentTypes = [
 ];
 
 export default function Reportar() {
+  const [searchParams] = useSearchParams();
   const { token } = useAuth();
   const [step, setStep] = useState<"formulario" | "confirmacion">("formulario");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -82,6 +84,20 @@ export default function Reportar() {
   const [evidenciaDataUrl, setEvidenciaDataUrl] = useState<string | null>(null);
   const [evidenciaNombre, setEvidenciaNombre] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const u = searchParams.get("ubicacion")?.trim();
+    if (u) {
+      setUbicacion(u);
+      setLocationStatus("Ubicación traída desde el mapa.");
+    }
+    const la = searchParams.get("lat")?.trim();
+    const lo = searchParams.get("lng")?.trim();
+    if (la && lo) {
+      setLat(la);
+      setLng(lo);
+    }
+  }, [searchParams]);
 
   const handleUseGps = () => {
     if (!navigator.geolocation) {

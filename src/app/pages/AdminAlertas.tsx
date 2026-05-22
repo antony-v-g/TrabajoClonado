@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bell, AlertCircle, Sparkles, RefreshCw } from "lucide-react";
-import { apiUrl, readApiErrorMessage } from "../lib/api";
+import { useAuth } from "../contexts/AuthContext";
+import { adminFetchJson } from "../lib/adminApi";
+import { AdminPageHeader } from "../components/AdminPageHeader";
+import { readApiErrorMessage } from "../lib/api";
 
 type AlertaRow = {
   id: number;
@@ -14,20 +17,21 @@ type AlertaRow = {
 };
 
 export default function AdminAlertas() {
+  const { token } = useAuth();
   const [list, setList] = useState<AlertaRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!token) return;
     setLoading(true);
     setErr(null);
     try {
-      const r = await fetch(apiUrl("/api/Admin/alertas"));
-      if (!r.ok) {
-        const m = await readApiErrorMessage(r, "Error al cargar");
-        throw new Error(m);
-      }
-      setList((await r.json()) as AlertaRow[]);
+      const { data } = await adminFetchJson<AlertaRow[]>(
+        "/api/Admin/alertas",
+        token,
+      );
+      setList(Array.isArray(data) ? data : []);
     } catch (e) {
       if (e instanceof TypeError) {
         setErr("Sin conexión con la API. ¿`dotnet run` en backend y `npm run dev`?");
@@ -37,7 +41,7 @@ export default function AdminAlertas() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     void load();
@@ -45,15 +49,10 @@ export default function AdminAlertas() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 pb-10">
-      <div>
-        <h1 className="text-3xl font-black text-slate-900">Alertas</h1>
-        <p className="mt-2 text-slate-500">
-          Registros almacenados en la base (tabla <code>AlertasSistema</code>).
-          Puedes generar más desde el{" "}
-          <span className="font-bold text-slate-700">Dashboard</span> con
-          &quot;Generar alertas preventivas&quot;.
-        </p>
-      </div>
+      <AdminPageHeader
+        title="Alertas"
+        subtitle="Alertas preventivas del sistema. Puedes generar más desde el Dashboard."
+      />
 
       {err ? (
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800 text-sm">

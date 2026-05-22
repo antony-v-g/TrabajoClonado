@@ -4,6 +4,7 @@ using Microsoft.ML.Data;
 using Microsoft.ML.Trainers;
 using RutaSegura.Data;
 using RutaSegura.Models;
+using RutaSegura.Services;
 
 namespace RutaSegura.ML;
 
@@ -23,13 +24,122 @@ public class MlModelTrainer
 
     public string ClassifierPath => Path.Combine(ArtifactsDir, "incident-classifier.zip");
     public string RecommenderPath => Path.Combine(ArtifactsDir, "route-recommender.zip");
+    public string ZoneSafetyPath => Path.Combine(ArtifactsDir, "zone-safety-classifier.zip");
 
     public async Task<MlTrainResult> TrainAllAsync(ApplicationDbContext db, CancellationToken ct = default)
     {
         Directory.CreateDirectory(ArtifactsDir);
         var incident = await TrainIncidentClassifierAsync(db, ct);
         var routes = await TrainRouteRecommenderAsync(db, ct);
-        return new MlTrainResult(incident, routes);
+        var zones = await TrainZoneSafetyClassifierAsync(db, ct);
+        return new MlTrainResult(incident, routes, zones);
+    }
+
+    public async Task<MlModelMetrics> TrainZoneSafetyClassifierAsync(
+        ApplicationDbContext db,
+        CancellationToken ct = default)
+    {
+        var rows = await BuildZoneSafetyTrainingRowsAsync(db, ct);
+        var ml = new MLContext(seed: 42);
+        var data = ml.Data.LoadFromEnumerable(rows);
+        var split = ml.Data.TrainTestSplit(data, testFraction: 0.2);
+
+        var featurize = ml.Transforms.Concatenate(
+            "Features",
+            nameof(ZoneSafetyTrainingRow.CantidadReportes),
+            nameof(ZoneSafetyTrainingRow.Trafico),
+            nameof(ZoneSafetyTrainingRow.Iluminacion),
+            nameof(ZoneSafetyTrainingRow.Hora));
+
+        var trainer = ml.Transforms.Conversion.MapValueToKey("Label")
+            .Append(
+                ml.MulticlassClassification.Trainers.SdcaMaximumEntropy(
+                    labelColumnName: "Label",
+                    featureColumnName: "Features"))
+            .Append(ml.Transforms.Conversion.MapKeyToValue("PredictedLabel"));
+
+        var model = featurize.Append(trainer).Fit(split.TrainSet);
+        var predictions = model.Transform(split.TestSet);
+        var metrics = ml.MulticlassClassification.Evaluate(
+            predictions,
+            labelColumnName: "Label",
+            predictedLabelColumnName: "PredictedLabel",
+            scoreColumnName: "Score");
+
+        ml.Model.Save(model, split.TrainSet.Schema, ZoneSafetyPath);
+        _logger.LogInformation(
+            "Clasificador de seguridad de zona guardado ({Rows} filas, macroAccuracy {Acc:P1})",
+            rows.Count,
+            metrics.MacroAccuracy);
+
+        return new MlModelMetrics(
+            "Seguridad de zona",
+            rows.Count,
+            metrics.MacroAccuracy,
+            metrics.LogLoss);
+    }
+
+    internal static async Task<List<ZoneSafetyTrainingRow>> BuildZoneSafetyTrainingRowsAsync(
+        ApplicationDbContext db,
+        CancellationToken ct)
+    {
+        var reportes = await db.Reportes.AsNoTracking().ToListAsync(ct);
+        var porZona = reportes
+            .GroupBy(r => (r.Ubicacion ?? "").Trim().ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var rows = new List<ZoneSafetyTrainingRow>();
+        foreach (var r in reportes.Where(r => !string.IsNullOrWhiteSpace(r.Ubicacion)))
+        {
+            var zona = (r.Ubicacion ?? "").Trim().ToLowerInvariant();
+            var cantidad = porZona.TryGetValue(zona, out var c) ? c : 1;
+            var f = ZoneFeatureBuilder.FromReporte(r, cantidad);
+            var label = InferZoneLabel(f.CantidadReportes, f.Trafico, f.Iluminacion, f.Hora);
+            rows.Add(
+                new ZoneSafetyTrainingRow
+                {
+                    Label = label,
+                    CantidadReportes = f.CantidadReportes,
+                    Trafico = f.Trafico,
+                    Iluminacion = f.Iluminacion,
+                    Hora = f.Hora,
+                });
+        }
+
+        rows.AddRange(GenerateSyntheticZoneRows());
+        return rows;
+    }
+
+    private static string InferZoneLabel(float cantidad, float trafico, float iluminacion, float hora)
+    {
+        var riesgo =
+            cantidad * 0.42f
+            + trafico * 0.22f
+            + (1f - iluminacion) * 0.28f
+            + (hora >= 19f || hora < 6f ? 0.12f : 0f);
+        if (riesgo >= 0.62f) return ZoneSafetyPresentation.Peligrosa;
+        if (riesgo >= 0.38f) return ZoneSafetyPresentation.Moderada;
+        return ZoneSafetyPresentation.Segura;
+    }
+
+    private static IEnumerable<ZoneSafetyTrainingRow> GenerateSyntheticZoneRows()
+    {
+        var rnd = new Random(99);
+        for (var i = 0; i < 90; i++)
+        {
+            var cantidad = (float)rnd.NextDouble();
+            var trafico = (float)rnd.NextDouble();
+            var iluminacion = (float)rnd.NextDouble();
+            var hora = rnd.Next(0, 24) + rnd.Next(0, 60) / 60f;
+            yield return new ZoneSafetyTrainingRow
+            {
+                Label = InferZoneLabel(cantidad, trafico, iluminacion, hora),
+                CantidadReportes = cantidad,
+                Trafico = trafico,
+                Iluminacion = iluminacion,
+                Hora = hora,
+            };
+        }
     }
 
     public async Task<MlModelMetrics> TrainIncidentClassifierAsync(
@@ -271,7 +381,10 @@ public static class RouteProfileKeyUtil
     }
 }
 
-public record MlTrainResult(MlModelMetrics Incident, MlModelMetrics Recommendation);
+public record MlTrainResult(
+    MlModelMetrics Incident,
+    MlModelMetrics Recommendation,
+    MlModelMetrics ZoneSafety);
 
 public record MlModelMetrics(
     string ModelName,

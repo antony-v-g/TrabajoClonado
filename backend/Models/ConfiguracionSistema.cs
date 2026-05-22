@@ -17,6 +17,14 @@ namespace RutaSegura.Models
         [Range(50, 100)]
         public int AutoAprobarConfianzaMinPct { get; set; } = 85;
 
+        /// <summary>Riesgo % ≥ este valor → prioridad alta al generar alertas.</summary>
+        [Range(1, 100)]
+        public int UmbralRiesgoAlertaAltaPct { get; set; } = 80;
+
+        /// <summary>Riesgo % ≥ este valor (y &lt; alta) → prioridad media.</summary>
+        [Range(1, 99)]
+        public int UmbralRiesgoAlertaMediaPct { get; set; } = 50;
+
         [MaxLength(500)]
         public string? PushNotificacionUrl { get; set; } = "https://push.rutasegura.net";
 

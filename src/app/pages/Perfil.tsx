@@ -13,6 +13,11 @@ import {
   Loader2,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import {
+  fetchPreferencias,
+  guardarPreferencias,
+  type PreferenciasUsuario,
+} from "../lib/preferenciasUsuario";
 import { useNavigate } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
 import { apiUrl, authJsonHeaders } from "../lib/api";
@@ -122,6 +127,11 @@ export default function Perfil() {
   const [nuIcono, setNuIcono] = useState("📍");
   const [savingUbi, setSavingUbi] = useState(false);
 
+  const [prefs, setPrefs] = useState<PreferenciasUsuario | null>(null);
+  const [prefsLoading, setPrefsLoading] = useState(false);
+  const [prefsSaving, setPrefsSaving] = useState(false);
+  const [prefsMsg, setPrefsMsg] = useState<string | null>(null);
+
   const [reportes, setReportes] = useState<ReporteApi[]>([]);
   const [loadingReportes, setLoadingReportes] = useState(false);
 
@@ -182,6 +192,44 @@ export default function Perfil() {
       cancel = true;
     };
   }, [activeTab, token]);
+
+  useEffect(() => {
+    if (activeTab !== "configuracion" || !token) return;
+    let cancel = false;
+    (async () => {
+      setPrefsLoading(true);
+      setPrefsMsg(null);
+      const p = await fetchPreferencias(token);
+      if (!cancel) {
+        setPrefs(
+          p ?? {
+            evitarZonasOscurasNoche: true,
+            modoMovilidadPredeterminado: "peaton",
+            alertasRiesgoTiempoReal: true,
+            avisoAutomaticoLlegada: true,
+          },
+        );
+        setPrefsLoading(false);
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [activeTab, token]);
+
+  const handleGuardarPrefs = async () => {
+    if (!token || !prefs) return;
+    setPrefsSaving(true);
+    setPrefsMsg(null);
+    const saved = await guardarPreferencias(token, prefs);
+    setPrefsSaving(false);
+    if (saved) {
+      setPrefs(saved);
+      setPrefsMsg("Preferencias guardadas correctamente.");
+    } else {
+      setPrefsMsg("No se pudieron guardar. Intenta de nuevo.");
+    }
+  };
 
   useEffect(() => {
     if (activeTab !== "historial" || !token) {
@@ -332,7 +380,7 @@ export default function Perfil() {
 
   const onLogout = () => {
     logout();
-    navigate("/");
+    navigate("/", { replace: true });
   };
 
   if (activeTab === "reportes") {
@@ -513,6 +561,9 @@ export default function Perfil() {
   }
 
   if (activeTab === "configuracion") {
+    const toggleClass =
+      "h-6 w-11 shrink-0 cursor-pointer appearance-none rounded-full bg-slate-200 transition checked:bg-indigo-600 relative after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:transition checked:after:translate-x-5";
+
     return (
       <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-right-4 duration-300 pb-10">
         <button
@@ -526,72 +577,132 @@ export default function Perfil() {
           Configuración del sistema
         </h1>
 
-        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden divide-y divide-slate-100">
-          <div className="p-5">
-            <h3 className="font-bold text-slate-900 mb-4">
-              Preferencias de ruta
-            </h3>
-            <div className="space-y-4">
-              <label className="flex items-center justify-between">
-                <span className="text-sm font-medium text-slate-700">
-                  Evitar zonas oscuras de noche
-                </span>
-                <input
-                  type="checkbox"
-                  defaultChecked
-                  className="toggle-checkbox w-10 h-5 rounded-full bg-slate-200 appearance-none cursor-pointer border-2 border-transparent checked:bg-indigo-600 transition-colors"
-                />
-              </label>
-              <label className="flex items-center justify-between">
-                <span className="text-sm font-medium text-slate-700">
-                  Modo de movilidad predeterminado
-                </span>
-                <select className="bg-slate-50 border border-slate-200 rounded-lg text-sm px-2 py-1 font-bold text-slate-700">
-                  <option>Peatón</option>
-                  <option>Bicicleta</option>
-                </select>
-              </label>
-            </div>
+        {prefsLoading || !prefs ? (
+          <div className="flex items-center gap-2 text-slate-500 py-12 justify-center">
+            <Loader2 className="w-5 h-5 animate-spin" />
+            Cargando preferencias…
           </div>
+        ) : (
+          <>
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden divide-y divide-slate-100">
+              <div className="p-5">
+                <h3 className="font-bold text-slate-900 mb-4">
+                  Preferencias de ruta
+                </h3>
+                <div className="space-y-4">
+                  <label className="flex items-center justify-between gap-4">
+                    <span className="text-sm font-medium text-slate-700">
+                      Evitar zonas oscuras de noche
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={prefs.evitarZonasOscurasNoche}
+                      onChange={(e) =>
+                        setPrefs({
+                          ...prefs,
+                          evitarZonasOscurasNoche: e.target.checked,
+                        })
+                      }
+                      className={toggleClass}
+                    />
+                  </label>
+                  <p className="text-xs text-slate-500 -mt-2">
+                    Entre 19:00 y 6:00 prioriza la ruta más segura al buscar
+                    trayectos.
+                  </p>
+                  <label className="flex items-center justify-between gap-4">
+                    <span className="text-sm font-medium text-slate-700">
+                      Modo de movilidad predeterminado
+                    </span>
+                    <select
+                      value={prefs.modoMovilidadPredeterminado}
+                      onChange={(e) =>
+                        setPrefs({
+                          ...prefs,
+                          modoMovilidadPredeterminado: e.target.value,
+                        })
+                      }
+                      className="bg-slate-50 border border-slate-200 rounded-lg text-sm px-2 py-1.5 font-bold text-slate-700"
+                    >
+                      <option value="peaton">Peatón</option>
+                      <option value="bike">Bicicleta</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
 
-          <div className="p-5">
-            <h3 className="font-bold text-slate-900 mb-4">
-              Notificaciones y alertas
-            </h3>
-            <div className="space-y-4">
-              <label className="flex items-center justify-between">
-                <div>
-                  <span className="text-sm font-medium text-slate-700 block">
-                    Alertas de riesgo en tiempo real
-                  </span>
-                  <span className="text-xs text-slate-500">
-                    Notificarme si entro a una zona peligrosa
-                  </span>
+              <div className="p-5">
+                <h3 className="font-bold text-slate-900 mb-4">
+                  Notificaciones y alertas
+                </h3>
+                <div className="space-y-4">
+                  <label className="flex items-center justify-between gap-4">
+                    <div>
+                      <span className="text-sm font-medium text-slate-700 block">
+                        Alertas de riesgo en tiempo real
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        Aviso en Mapa si la zona es peligrosa
+                      </span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={prefs.alertasRiesgoTiempoReal}
+                      onChange={(e) =>
+                        setPrefs({
+                          ...prefs,
+                          alertasRiesgoTiempoReal: e.target.checked,
+                        })
+                      }
+                      className={toggleClass}
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-4">
+                    <div>
+                      <span className="text-sm font-medium text-slate-700 block">
+                        Aviso automático de llegada
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        Si sales de la navegación sin «Llegué bien»
+                      </span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={prefs.avisoAutomaticoLlegada}
+                      onChange={(e) =>
+                        setPrefs({
+                          ...prefs,
+                          avisoAutomaticoLlegada: e.target.checked,
+                        })
+                      }
+                      className={toggleClass}
+                    />
+                  </label>
                 </div>
-                <input
-                  type="checkbox"
-                  defaultChecked
-                  className="toggle-checkbox w-10 h-5 rounded-full bg-slate-200 appearance-none cursor-pointer border-2 border-transparent checked:bg-indigo-600 transition-colors"
-                />
-              </label>
-              <label className="flex items-center justify-between">
-                <div>
-                  <span className="text-sm font-medium text-slate-700 block">
-                    Aviso automático de llegada
-                  </span>
-                  <span className="text-xs text-slate-500">
-                    Alertar a contactos si no marco &quot;Llegué bien&quot;
-                  </span>
-                </div>
-                <input
-                  type="checkbox"
-                  defaultChecked
-                  className="toggle-checkbox w-10 h-5 rounded-full bg-slate-200 appearance-none cursor-pointer border-2 border-transparent checked:bg-indigo-600 transition-colors"
-                />
-              </label>
+              </div>
             </div>
-          </div>
-        </div>
+
+            <button
+              type="button"
+              disabled={prefsSaving}
+              onClick={() => void handleGuardarPrefs()}
+              className="w-full rounded-2xl bg-indigo-600 py-3.5 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              {prefsSaving ? "Guardando…" : "Guardar preferencias"}
+            </button>
+            {prefsMsg && (
+              <p
+                className={`text-sm font-medium text-center ${
+                  prefsMsg.includes("correctamente")
+                    ? "text-emerald-700"
+                    : "text-amber-800"
+                }`}
+              >
+                {prefsMsg}
+              </p>
+            )}
+          </>
+        )}
       </div>
     );
   }
