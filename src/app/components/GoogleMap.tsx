@@ -1,4 +1,11 @@
-import { useMemo, useState, useCallback, useEffect, type ReactNode } from "react";
+import {
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 import {
   useJsApiLoader,
   GoogleMap,
@@ -101,6 +108,18 @@ export function GoogleMapView({
 
   const mapCenter = useMemo(() => center ?? defaultCenter, [center]);
   const mapZoom = zoom ?? 15;
+  const mapRef = useRef<google.maps.Map | null>(null);
+
+  const onMapLoad = useCallback((map: google.maps.Map) => {
+    mapRef.current = map;
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !center) return;
+    map.panTo(center);
+    if (zoom != null) map.setZoom(zoom);
+  }, [center, zoom]);
 
   const marcadoresEnMapa = useMemo(() => {
     if (marcadoresDinamicos != null) {
@@ -198,6 +217,7 @@ export function GoogleMapView({
       mapContainerStyle={containerStyle}
       center={mapCenter}
       zoom={mapZoom}
+      onLoad={onMapLoad}
       options={{
         streetViewControl: false,
         fullscreenControl: false,
