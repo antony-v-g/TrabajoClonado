@@ -17,15 +17,32 @@ namespace RutaSegura.Controllers
         private readonly ApplicationDbContext _context;
         private readonly RedisService _redis;
         private readonly MlNetService _ml;
+        private readonly ILogger<ReportesController> _logger;
 
         public ReportesController(
             ApplicationDbContext context,
             RedisService redis,
-            MlNetService ml)
+            MlNetService ml,
+            ILogger<ReportesController> logger)
         {
             _context = context;
             _redis = redis;
             _ml = ml;
+            _logger = logger;
+        }
+
+        private static string? CodigoCatalogoDesdeTipo(string tipoIncidente)
+        {
+            return tipoIncidente.Trim() switch
+            {
+                "Robo" => "Robo",
+                "Acoso" => "Asalto",
+                "Sin Iluminación" => "ZonaOscura",
+                "Hueco en Vía" => "Accidente",
+                "Accidente" => "Accidente",
+                "Otro peligro" => "Otro",
+                _ => null,
+            };
         }
 
         [Authorize(Roles = "Administrador")]
@@ -226,7 +243,18 @@ namespace RutaSegura.Controllers
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
-            var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
+                return Unauthorized(new { message = "Sesión inválida. Inicia sesión de nuevo." });
+
+            if (!await _context.Usuarios.AsNoTracking().AnyAsync(u => u.Id == userId))
+            {
+                return Unauthorized(new
+                {
+                    message =
+                        "Tu usuario ya no existe en el servidor (p. ej. tras un reinicio). Cierra sesión e inicia de nuevo.",
+                });
+            }
 
             if (!string.IsNullOrEmpty(req.UrlFotoEvidencia) &&
                 req.UrlFotoEvidencia.Length > MaxEvidenciaLength)
@@ -237,9 +265,13 @@ namespace RutaSegura.Controllers
                 });
             }
 
+            var codigoCatalogo = CodigoCatalogoDesdeTipo(req.TipoIncidente) ?? req.TipoIncidente.Trim();
             var cat = await _context.Catalogos
                 .AsNoTracking()
-                .FirstOrDefaultAsync(c => c.Tipo == "incidente" && c.Codigo == req.TipoIncidente && c.Activo);
+                .FirstOrDefaultAsync(c =>
+                    c.Tipo == "TipoReporte"
+                    && c.Activo
+                    && (c.Codigo == codigoCatalogo || c.Nombre == req.TipoIncidente));
 
             var proyectoDefault = await _context.Proyectos
                 .AsNoTracking()
@@ -249,22 +281,29 @@ namespace RutaSegura.Controllers
             var hasCoords =
                 !string.IsNullOrWhiteSpace(req.Latitud) && !string.IsNullOrWhiteSpace(req.Longitud);
 
-            await _ml.EnsureModelsAsync();
             var nivelIa = 0f;
-            var clasificacion = _ml.ClassifyIncident(
-                req.Descripcion,
-                req.Ubicacion,
-                hasCoords,
-                DateTime.UtcNow);
-            if (clasificacion != null)
+            try
             {
-                if (clasificacion.ProbabilidadesPorTipo.TryGetValue(req.TipoIncidente, out var prob))
-                    nivelIa = prob * 100f;
-                else if (string.Equals(
-                             clasificacion.TipoPredicho,
-                             req.TipoIncidente,
-                             StringComparison.OrdinalIgnoreCase))
-                    nivelIa = (float)clasificacion.ConfianzaPct;
+                await _ml.EnsureModelsAsync();
+                var clasificacion = _ml.ClassifyIncident(
+                    req.Descripcion,
+                    req.Ubicacion,
+                    hasCoords,
+                    DateTime.UtcNow);
+                if (clasificacion != null)
+                {
+                    if (clasificacion.ProbabilidadesPorTipo.TryGetValue(codigoCatalogo, out var prob))
+                        nivelIa = prob * 100f;
+                    else if (string.Equals(
+                                 clasificacion.TipoPredicho,
+                                 codigoCatalogo,
+                                 StringComparison.OrdinalIgnoreCase))
+                        nivelIa = (float)clasificacion.ConfianzaPct;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ML omitido al crear reporte para usuario {UserId}", userId);
             }
 
             var reporte = new Reporte
@@ -284,10 +323,31 @@ namespace RutaSegura.Controllers
                 NivelConfianzaIA = nivelIa,
             };
 
-            _context.Reportes.Add(reporte);
-            await _context.SaveChangesAsync();
+            try
+            {
+                _context.Reportes.Add(reporte);
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateException ex)
+            {
+                _logger.LogError(ex, "No se pudo guardar el reporte (usuario {UserId})", userId);
+                return StatusCode(
+                    500,
+                    new
+                    {
+                        message =
+                            "No se pudo guardar el reporte en la base de datos. Prueba sin adjuntar archivo o inicia sesión de nuevo.",
+                    });
+            }
 
-            await LimpiarCacheReportes(userId);
+            try
+            {
+                await LimpiarCacheReportes(userId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Cache Redis no limpiada tras crear reporte {ReporteId}", reporte.Id);
+            }
 
             return Ok(new { success = true, message = "Reporte creado exitosamente.", id = reporte.Id });
         }
@@ -296,21 +356,28 @@ namespace RutaSegura.Controllers
         {
             if (!_redis.IsEnabled) return;
 
-            await _redis.RemoveAsync("reportes:todos:v2");
-            await _redis.RemoveAsync($"reportes:mios:{usuarioId}");
-
-            for (int take = 1; take <= 30; take++)
+            try
             {
-                await _redis.RemoveAsync($"reportes:recientes:v3:{take}:30");
+                await _redis.RemoveAsync("reportes:todos:v2");
+                await _redis.RemoveAsync($"reportes:mios:{usuarioId}");
+
+                for (int take = 1; take <= 30; take++)
+                {
+                    await _redis.RemoveAsync($"reportes:recientes:v3:{take}:30");
+                }
+
+                await _redis.RemoveAsync("reportes:recientes:v3:8:30");
+                await DashboardAlertasService.InvalidateAlertasCacheAsync(_redis);
+
+                for (var take = 1; take <= 100; take++)
+                    await _redis.RemoveAsync($"mapa:incidentes:v1:30:{take}");
+
+                await AdminCacheKeys.InvalidateAllAsync(_redis);
             }
-
-            await _redis.RemoveAsync("reportes:recientes:v3:8:30");
-            await DashboardAlertasService.InvalidateAlertasCacheAsync(_redis);
-
-            for (var take = 1; take <= 100; take++)
-                await _redis.RemoveAsync($"mapa:incidentes:v1:30:{take}");
-
-            await AdminCacheKeys.InvalidateAllAsync(_redis);
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error al invalidar caché tras reporte");
+            }
         }
     }
 }

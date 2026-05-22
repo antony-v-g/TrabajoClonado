@@ -16,6 +16,7 @@ public class MlNetService
     private PredictionEngine<RouteRecommendationInput, RouteRecommendationOutput>? _recommender;
     private PredictionEngine<ZoneSafetyTrainingRow, ZoneSafetyPredictionOutput>? _zoneSafety;
     private MLContext? _ml;
+    private readonly SemaphoreSlim _trainGate = new(1, 1);
     private string[] _incidentLabels = ["Robo", "Asalto", "Accidente", "ZonaOscura", "Otro"];
     private string[] _zoneLabels =
     [
@@ -40,14 +41,28 @@ public class MlNetService
 
     public async Task EnsureModelsAsync(CancellationToken ct = default)
     {
-        if (!ClassifierReady || !RecommenderReady || !ZoneSafetyReady)
+        if (ClassifierReady && RecommenderReady && ZoneSafetyReady)
         {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-            await _trainer.TrainAllAsync(db, ct);
+            ReloadEngines();
+            return;
         }
 
-        ReloadEngines();
+        await _trainGate.WaitAsync(ct);
+        try
+        {
+            if (!ClassifierReady || !RecommenderReady || !ZoneSafetyReady)
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                await _trainer.TrainAllAsync(db, ct);
+            }
+
+            ReloadEngines();
+        }
+        finally
+        {
+            _trainGate.Release();
+        }
     }
 
     public void ReloadEngines()
