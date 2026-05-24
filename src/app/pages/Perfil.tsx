@@ -21,6 +21,7 @@ import {
 import { useNavigate } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
 import { apiUrl, authJsonHeaders, readApiErrorMessage } from "../lib/api";
+import { formatoFechaPerfil } from "../lib/fechaUi";
 
 type ContactoApi = {
   id: number;
@@ -79,14 +80,7 @@ function initialsFromNombre(nombre: string) {
 }
 
 function fmtFecha(iso: string) {
-  try {
-    return new Date(iso).toLocaleString("es-PE", {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  } catch {
-    return iso;
-  }
+  return formatoFechaPerfil(iso);
 }
 
 function estadoStyle(estado: string) {

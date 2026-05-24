@@ -4,12 +4,22 @@
  * para `vite preview` o pruebas sin proxy.
  */
 export function apiUrl(path: string): string {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
   const raw = import.meta.env.VITE_API_URL;
-  if (raw != null && String(raw).trim() !== "") {
-    const b = String(raw).replace(/\/$/, "");
-    return path.startsWith("/") ? `${b}${path}` : `${b}/${path}`;
+  if (raw == null || String(raw).trim() === "") {
+    return normalized;
   }
-  return path.startsWith("/") ? path : `/${path}`;
+  const base = String(raw).replace(/\/$/, "");
+  if (typeof window !== "undefined") {
+    try {
+      if (new URL(base).origin === window.location.origin) {
+        return normalized;
+      }
+    } catch {
+      // base no es URL absoluta
+    }
+  }
+  return `${base}${normalized}`;
 }
 
 export function authJsonHeaders(

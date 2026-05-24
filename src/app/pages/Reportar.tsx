@@ -61,6 +61,11 @@ const incidentTypes = [
     style: "bg-orange-50 text-orange-800 border-orange-200",
   },
   {
+    id: "vandalismo",
+    label: "Vandalismo",
+    style: "bg-purple-50 text-purple-900 border-purple-200",
+  },
+  {
     id: "otro",
     label: "Otro peligro",
     style: "bg-slate-100 text-slate-800 border-slate-200",
@@ -191,6 +196,28 @@ export default function Reportar() {
     reader.readAsDataURL(f);
   };
 
+  const resolverCoordsDesdeDireccion = async (
+    direccion: string,
+  ): Promise<{ lat: string; lng: string } | null> => {
+    const query = direccion.includes("Perú") || direccion.includes("Peru")
+      ? direccion
+      : `${direccion}, Lima, Perú`;
+    try {
+      const res = await fetch(
+        apiUrl(`/api/External/geocode?address=${encodeURIComponent(query)}`),
+      );
+      if (!res.ok) return null;
+      const data = (await res.json()) as {
+        results?: Array<{ geometry?: { location?: { lat?: number; lng?: number } } }>;
+      };
+      const loc = data.results?.[0]?.geometry?.location;
+      if (loc?.lat == null || loc?.lng == null) return null;
+      return { lat: String(loc.lat), lng: String(loc.lng) };
+    } catch {
+      return null;
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token) {
@@ -202,6 +229,27 @@ export default function Reportar() {
     const tipoLabel =
       incidentTypes.find((t) => t.id === selectedType)?.label ?? "Otro";
 
+    let latEnvio = lat;
+    let lngEnvio = lng;
+    if (!latEnvio || !lngEnvio) {
+      setLocationStatus("Buscando coordenadas de la dirección para el mapa…");
+      const resueltas = await resolverCoordsDesdeDireccion(ubicacion);
+      if (resueltas) {
+        latEnvio = resueltas.lat;
+        lngEnvio = resueltas.lng;
+        setLat(latEnvio);
+        setLng(lngEnvio);
+        setLocationStatus("Ubicación lista para el mapa de calor.");
+      } else {
+        window.alert(
+          "No pudimos ubicar esta dirección en el mapa. Pulsa «Usar mi GPS» o escribe una dirección más específica (calle y distrito).",
+        );
+        setLocationStatus("Falta GPS o dirección válida para el mapa.");
+        setIsSubmitting(false);
+        return;
+      }
+    }
+
     try {
       const response = await fetch(apiUrl("/api/Reportes/Crear"), {
         method: "POST",
@@ -210,8 +258,8 @@ export default function Reportar() {
           TipoIncidente: tipoLabel,
           Ubicacion: ubicacion,
           Descripcion: descripcion || null,
-          Latitud: lat,
-          Longitud: lng,
+          Latitud: latEnvio,
+          Longitud: lngEnvio,
           UrlFotoEvidencia: evidenciaDataUrl,
           EsAnonimo: anonymous,
         }),

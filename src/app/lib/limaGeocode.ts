@@ -114,11 +114,19 @@ export function pickBestGeocodeResult(
   }
   if (results.length === 1) return results[0]!;
 
+  const readCoord = (p: google.maps.LatLng | { lat: number; lng: number }) => {
+    if (typeof (p as google.maps.LatLng).lat === "function") {
+      const ll = p as google.maps.LatLng;
+      return { lat: ll.lat(), lng: ll.lng() };
+    }
+    const o = p as { lat: number; lng: number };
+    return { lat: Number(o.lat), lng: Number(o.lng) };
+  };
+
   const inBounds = (r: google.maps.GeocoderResult) => {
     const p = r.geometry?.location;
     if (!p) return false;
-    const lat = p.lat();
-    const lng = p.lng();
+    const { lat, lng } = readCoord(p);
     return (
       lat >= LIMA_METRO_BOUNDS.south &&
       lat <= LIMA_METRO_BOUNDS.north &&

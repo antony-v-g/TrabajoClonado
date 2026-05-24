@@ -66,7 +66,8 @@ public class MlModelTrainer
             nameof(ZoneSafetyTrainingRow.Trafico),
             nameof(ZoneSafetyTrainingRow.Iluminacion),
             nameof(ZoneSafetyTrainingRow.Hora),
-            nameof(ZoneSafetyTrainingRow.IncidentesRecientes));
+            nameof(ZoneSafetyTrainingRow.IncidentesRecientes),
+            nameof(ZoneSafetyTrainingRow.CondicionClima));
 
         var trainer = ml.Transforms.Conversion.MapValueToKey("Label")
             .Append(
@@ -121,7 +122,8 @@ public class MlModelTrainer
                 f.Trafico,
                 f.Iluminacion,
                 f.Hora,
-                incidentes);
+                incidentes,
+                0f);
             rows.Add(
                 new ZoneSafetyTrainingRow
                 {
@@ -131,6 +133,7 @@ public class MlModelTrainer
                     Iluminacion = f.Iluminacion,
                     Hora = f.Hora,
                     IncidentesRecientes = incidentes,
+                    CondicionClima = 0f,
                 });
         }
 
@@ -144,14 +147,16 @@ public class MlModelTrainer
         float trafico,
         float iluminacion,
         float hora,
-        float incidentesRecientes)
+        float incidentesRecientes,
+        float condicionClima = 0f)
     {
         var riesgo =
             cantidad * 0.35f
             + trafico * 0.18f
             + (1f - iluminacion) * 0.22f
             + (hora >= 19f || hora < 6f ? 0.10f : 0f)
-            + incidentesRecientes * 0.15f;
+            + incidentesRecientes * 0.15f
+            + condicionClima * 0.12f;
         if (riesgo >= 0.62f) return ZoneSafetyPresentation.Peligrosa;
         if (riesgo >= 0.38f) return ZoneSafetyPresentation.Moderada;
         return ZoneSafetyPresentation.Segura;
@@ -167,14 +172,16 @@ public class MlModelTrainer
             var iluminacion = (float)rnd.NextDouble();
             var hora = rnd.Next(0, 24) + rnd.Next(0, 60) / 60f;
             var incidentes = (float)rnd.NextDouble();
+            var clima = (float)(rnd.NextDouble() * 0.85);
             yield return new ZoneSafetyTrainingRow
             {
-                Label = InferZoneLabel(cantidad, trafico, iluminacion, hora, incidentes),
+                Label = InferZoneLabel(cantidad, trafico, iluminacion, hora, incidentes, clima),
                 CantidadReportes = cantidad,
                 Trafico = trafico,
                 Iluminacion = iluminacion,
                 Hora = hora,
                 IncidentesRecientes = incidentes,
+                CondicionClima = clima,
             };
         }
     }
@@ -338,6 +345,14 @@ public class MlModelTrainer
     private static string NormalizeIncidentLabel(string tipo)
     {
         var t = tipo.Trim();
+        if (t.Contains("zona", StringComparison.OrdinalIgnoreCase)
+            && t.Contains("oscur", StringComparison.OrdinalIgnoreCase))
+            return "ZonaOscura";
+        if (t.Equals("Acoso", StringComparison.OrdinalIgnoreCase)) return "Asalto";
+        if (t.Equals("Sin Iluminación", StringComparison.OrdinalIgnoreCase)) return "ZonaOscura";
+        if (t.Equals("Hueco en Vía", StringComparison.OrdinalIgnoreCase)) return "Accidente";
+        if (t.Equals("Otro peligro", StringComparison.OrdinalIgnoreCase)) return "Otro";
+        if (t.Equals("Vandalismo", StringComparison.OrdinalIgnoreCase)) return "Vandalismo";
         if (t.Equals("Zona Oscura", StringComparison.OrdinalIgnoreCase)
             || t.Equals("ZonaOscura", StringComparison.OrdinalIgnoreCase))
             return "ZonaOscura";
@@ -347,7 +362,7 @@ public class MlModelTrainer
     private static IEnumerable<IncidentTrainingRow> GenerateSyntheticIncidentRows()
     {
         var rnd = new Random(42);
-        var labels = new[] { "Robo", "Asalto", "Accidente", "ZonaOscura", "Otro" };
+        var labels = new[] { "Robo", "Asalto", "Accidente", "ZonaOscura", "Vandalismo", "Otro" };
         for (var i = 0; i < 120; i++)
         {
             var label = labels[i % labels.Length];
@@ -357,6 +372,7 @@ public class MlModelTrainer
                 "Asalto" => rnd.Next(20, 24),
                 "Accidente" => rnd.Next(7, 20),
                 "ZonaOscura" => rnd.Next(19, 24),
+                "Vandalismo" => rnd.Next(14, 23),
                 _ => rnd.Next(8, 22),
             };
             yield return new IncidentTrainingRow

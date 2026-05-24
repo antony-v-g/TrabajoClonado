@@ -17,17 +17,87 @@ public class AdminController : ControllerBase
     private readonly RedisService _redis;
     private readonly MlNetService _ml;
     private readonly SistemaConfigService _config;
+    private readonly ExternalApisService _external;
+    private readonly AdminPredictivoService _predictivo;
+    private readonly AlertasInteligentesService _alertasInteligentes;
+    private readonly ReporteGeocodingService _geocoding;
 
     public AdminController(
         ApplicationDbContext context,
         RedisService redis,
         MlNetService ml,
-        SistemaConfigService config)
+        SistemaConfigService config,
+        ExternalApisService external,
+        AdminPredictivoService predictivo,
+        AlertasInteligentesService alertasInteligentes,
+        ReporteGeocodingService geocoding)
     {
         _context = context;
         _redis = redis;
         _ml = ml;
         _config = config;
+        _external = external;
+        _predictivo = predictivo;
+        _alertasInteligentes = alertasInteligentes;
+        _geocoding = geocoding;
+    }
+
+    /// <summary>Predicciones ML.NET por zona (tendencia 7d vs semana anterior).</summary>
+    [HttpGet("predicciones")]
+    public async Task<IActionResult> GetPredicciones(
+        [FromQuery] int take = 6,
+        CancellationToken ct = default)
+    {
+        var cacheKey = $"admin:predicciones:v1:{Math.Clamp(take, 1, 12)}";
+        if (_redis.IsEnabled)
+        {
+            var cached = await _redis.GetStringAsync(cacheKey);
+            if (cached != null)
+            {
+                var parsed = ApiJson.Deserialize<List<PrediccionZonaDto>>(cached);
+                if (parsed != null)
+                {
+                    return Ok(new
+                    {
+                        cacheRedisActivo = true,
+                        servidoDesdeCache = true,
+                        predicciones = parsed,
+                    });
+                }
+            }
+        }
+
+        var list = await _predictivo.GetPrediccionesAsync(take, ct);
+        if (_redis.IsEnabled)
+        {
+            await _redis.SetStringAsync(
+                cacheKey,
+                ApiJson.Serialize(list),
+                TimeSpan.FromMinutes(5));
+        }
+
+        return Ok(new
+        {
+            cacheRedisActivo = _redis.IsEnabled,
+            servidoDesdeCache = false,
+            predicciones = list,
+        });
+    }
+
+    /// <summary>Estado de notificaciones push (FCM / webhook).</summary>
+    [HttpGet("push-estado")]
+    public IActionResult GetPushEstado()
+    {
+        var fcm = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIREBASE_SERVER_KEY"))
+            || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FCM_SERVER_KEY"));
+        return Ok(new
+        {
+            fcmConfigurado = fcm,
+            fcmTopic = Environment.GetEnvironmentVariable("FCM_TOPIC") ?? "rutasegura-alertas",
+            mensaje = fcm
+                ? "Firebase Cloud Messaging listo (clave en .env)."
+                : "Sin FCM: configure FIREBASE_SERVER_KEY o webhook PushNotificacionUrl en admin.",
+        });
     }
 
     /// <summary>Estado de Redis para el panel admin (caché corta).</summary>
@@ -242,28 +312,30 @@ public class AdminController : ControllerBase
         CancellationToken ct = default)
     {
         var d = Math.Clamp(maxDias, 1, 365);
-        var cacheKey = AdminCacheKeys.PuntosMapa(d);
-        if (_redis.IsEnabled)
-        {
-            var cached = await _redis.GetStringAsync(cacheKey);
-            if (cached != null)
-            {
-                var parsed = ApiJson.Deserialize<List<object>>(cached);
-                if (parsed != null)
-                {
-                    return Ok(
-                        new
-                        {
-                            cacheRedisActivo = true,
-                            servidoDesdeCache = true,
-                            puntos = parsed,
-                        });
-                }
-            }
-        }
-
         var cfg = await _config.GetAsync(ct);
         var desde = DateTime.UtcNow.AddDays(-d);
+
+        // Reportes viejos sin GPS: intentar geocodificar por dirección (máx. 10 por carga).
+        var sinCoords = await _context.Reportes
+            .Where(r =>
+                r.FechaReporte >= desde
+                && (r.Latitud == null || r.Latitud == "" || r.Longitud == null || r.Longitud == "")
+                && r.Ubicacion != null
+                && r.Ubicacion != "")
+            .OrderByDescending(r => r.FechaReporte)
+            .Take(10)
+            .ToListAsync(ct);
+
+        var coordsActualizadas = false;
+        foreach (var r in sinCoords)
+        {
+            if (await _geocoding.EnsureCoordinatesAsync(r, ct))
+                coordsActualizadas = true;
+        }
+
+        if (coordsActualizadas)
+            await _context.SaveChangesAsync(ct);
+
         var list = await _context.Reportes
             .AsNoTracking()
             .Where(r => r.FechaReporte >= desde
@@ -319,14 +391,6 @@ public class AdminController : ControllerBase
                             : null,
                     });
             }
-        }
-
-        if (_redis.IsEnabled)
-        {
-            await _redis.SetStringAsync(
-                cacheKey,
-                ApiJson.Serialize(result),
-                TimeSpan.FromMinutes(5));
         }
 
         return Ok(
@@ -415,46 +479,58 @@ public class AdminController : ControllerBase
                 });
         }
 
-        var cfg = await _config.GetAsync(ct);
+        var predicciones = await _predictivo.GetPrediccionesAsync(8, ct);
         var hora = (float)DateTime.UtcNow.Hour;
-        var ahora = DateTime.UtcNow;
+        var pushCount = 0;
+
         foreach (var t in top)
         {
+            var pred = predicciones.FirstOrDefault(p =>
+                string.Equals(p.Ubicacion.Trim(), t.ubic.Trim(), StringComparison.OrdinalIgnoreCase));
+
             var mlZona = _ml.ClassifyZoneSafety(
                 Math.Min(t.cnt / 15f, 1f),
                 0.5f,
                 0.5f,
                 hora);
             var display = ZoneSafetyPresentation.ToDisplay(mlZona.Nivel, mlZona.ConfianzaPct);
-            var riesgo = (int)Math.Clamp(
-                Math.Round(mlZona.ConfianzaPct * 0.5 + t.cnt * 4.0),
-                0,
-                99);
-            _context.AlertasSistema.Add(
-                new AlertaSistema
-                {
-                    Titulo = $"{display.IndicadorVisual} Riesgo: {t.ubic}",
-                    Detalle =
-                        $"ML.NET zona «{display.Etiqueta}» · {t.cnt} reporte(s) · confianza IA media {(int)(t.avgIa * 100)}%.",
-                    Prioridad = SistemaConfigService.PrioridadDesdeRiesgoPct(
-                        riesgo,
-                        cfg.UmbralRiesgoAlertaAltaPct,
-                        cfg.UmbralRiesgoAlertaMediaPct),
-                    Origen = "Auto+ML",
-                    UbicacionRef = t.ubic,
-                    RiesgoEstimadoPct = riesgo,
-                    CreadaEn = ahora,
-                });
-        }
+            var riesgo = pred?.RiesgoPredichoPct
+                ?? (int)Math.Clamp(
+                    Math.Round(mlZona.ConfianzaPct * 0.5 + t.cnt * 4.0),
+                    0,
+                    99);
 
-        await _context.SaveChangesAsync(ct);
-        await AdminCacheKeys.InvalidateAllAsync(_redis);
+            var titulo = pred?.MensajePredictivo.StartsWith('⚠') == true
+                ? pred.MensajePredictivo
+                : AdminPredictivoService.ConstruirMensaje(
+                    t.ubic,
+                    t.cnt,
+                    pred?.ReportesSemanaAnterior ?? 0,
+                    pred?.DeltaPct ?? 0,
+                    pred?.TipoIncidenteDominante ?? "Varios",
+                    display.Etiqueta);
+
+            var detalle =
+                $"{display.IndicadorVisual} ML.NET zona «{display.Etiqueta}» · {t.cnt} reporte(s) · confianza IA media {(int)(t.avgIa * 100)}%. "
+                + (pred != null
+                    ? $"Tendencia: {pred.DeltaPct:+0.#;-0.#}% vs semana anterior."
+                    : "");
+
+            pushCount += await _alertasInteligentes.CrearAlertaConPushAsync(
+                titulo.Length > 200 ? titulo[..197] + "…" : titulo,
+                detalle,
+                t.ubic,
+                riesgo,
+                "Auto+ML",
+                ct);
+        }
 
         return Ok(
             new
             {
-                creadas = top.Count,
-                message = "Alertas preventivas generadas (ML.NET + Redis invalidado).",
+                creadas = pushCount,
+                pushIntentados = top.Count,
+                message = "Alertas preventivas generadas (ML.NET + Redis + push si FCM/webhook configurado).",
                 cacheInvalidado = _redis.IsEnabled,
             });
     }
@@ -758,6 +834,74 @@ public class AdminController : ControllerBase
                     redis = new { habilitado = _redis.IsEnabled, message = ex.Message },
                 });
         }
+    }
+
+    /// <summary>Motor predictivo: correlación reportes nocturnos + clima actual (WeatherAPI).</summary>
+    [HttpGet("analisis-clima-incidentes")]
+    public async Task<IActionResult> AnalisisClimaIncidentes(CancellationToken ct)
+    {
+        var reportes = await _context.Reportes.AsNoTracking().ToListAsync(ct);
+        var total = reportes.Count;
+        var nocturnos = reportes.Count(r =>
+        {
+            var h = r.FechaReporte.AddHours(-5).Hour;
+            return h >= 22 || h < 6;
+        });
+        var tiposNocturnos = reportes
+            .Where(r =>
+            {
+                var h = r.FechaReporte.AddHours(-5).Hour;
+                return h >= 22 || h < 6;
+            })
+            .GroupBy(r => r.TipoIncidente)
+            .Select(g => new { tipo = g.Key, cantidad = g.Count() })
+            .OrderByDescending(x => x.cantidad)
+            .Take(5)
+            .ToList();
+
+        var porHora = Enumerable.Range(0, 24)
+            .Select(h => new
+            {
+                hora = $"{h:00}:00",
+                reportes = reportes.Count(r => r.FechaReporte.AddHours(-5).Hour == h),
+            })
+            .ToList();
+
+        var ctx = await _external.GetClimaContextoAsync(-12.0464, -77.0428, null, ct);
+        var pctNocturno = total > 0 ? Math.Round(nocturnos * 100.0 / total, 1) : 0;
+        var climaAdverso = ctx.Impacto.CondicionClima >= 0.35f;
+
+        var insight =
+            total == 0
+                ? "Sin reportes aún. Con clima adverso el motor elevará riesgo preventivamente."
+                : pctNocturno >= 45
+                    ? $"El {pctNocturno}% de incidentes ocurren de noche (22:00–06:00). "
+                      + (climaAdverso
+                          ? $"Hoy hay {ctx.Clima.Descripcion.ToLowerInvariant()}: ML.NET incrementa CondicionClima y prioriza rutas seguras."
+                          : "Patrón compatible con mayor riesgo en lluvias nocturnas cuando el clima empeora.")
+                    : $"El {pctNocturno}% de reportes son nocturnos. "
+                      + (climaAdverso
+                          ? "Clima adverso activo: reforzar alertas en zonas oscuras."
+                          : "Clima actual favorable para movilidad urbana.");
+
+        return Ok(new
+        {
+            totalReportes = total,
+            reportesNocturnos = nocturnos,
+            porcentajeNocturno = pctNocturno,
+            tiposEnHorarioNocturno = tiposNocturnos,
+            distribucionPorHora = porHora,
+            climaActual = ctx.Clima,
+            climaImpacto = ctx.Impacto,
+            motorPredictivo = new
+            {
+                titulo = "Correlación clima · incidentes nocturnos",
+                insight,
+                recomendacionAdmin = climaAdverso
+                    ? "Revisar mapa de calor y alertas en distritos con reportes nocturnos + lluvia."
+                    : "Monitorear franjas 20:00–23:00 donde concentran los reportes.",
+            },
+        });
     }
 
     private async Task<ConfiguracionSistema> EnsureConfigRowAsync(CancellationToken ct)

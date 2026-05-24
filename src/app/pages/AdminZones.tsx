@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, Loader2, X } from "lucide-react";
+import { Search, Loader2, X, RefreshCw } from "lucide-react";
+import { useLocation } from "react-router";
 import { useJsApiLoader, StandaloneSearchBox } from "@react-google-maps/api";
 import {
   GoogleMapView,
@@ -37,11 +38,21 @@ type PuntoApi = {
 };
 
 type FiltroEstado = "todos" | "Pendiente" | "Aprobado" | "Rechazado";
+type ModoMapaCalor = "calor" | "pines" | "ambos";
+
+function pesoCalor(estado: string) {
+  const n = normalizarEstado(estado);
+  if (n === "Aprobado") return 2;
+  if (n === "Pendiente") return 1.5;
+  return 0.8;
+}
 
 function colorPorEstado(estado: string) {
-  if (estado === "Aprobado") return "#10b981";
-  if (estado === "Rechazado") return "#f43f5e";
-  return "#f59e0b";
+  const n = normalizarEstado(estado);
+  if (n === "Aprobado") return "#10b981";
+  if (n === "Rechazado") return "#f43f5e";
+  if (n === "Pendiente") return "#f59e0b";
+  return "#94a3b8";
 }
 
 function normalizarEstado(estado: string): FiltroEstado | "otro" {
@@ -74,6 +85,7 @@ function centroDesdePuntos(list: PuntoApi[]): LatLngLiteral {
 
 export default function AdminZones() {
   const { token } = useAuth();
+  const location = useLocation();
   const mapKey = getGoogleMapsApiKey();
   const { isLoaded } = useJsApiLoader(
     mapKey ? getGoogleMapsLoaderConfig(mapKey) : GOOGLE_MAPS_LOADER_DISABLED,
@@ -90,8 +102,9 @@ export default function AdminZones() {
   const [mapZoom, setMapZoom] = useState(12);
   /** Si el admin eligió una dirección en Google, no recentrar el mapa al filtrar pines. */
   const [vistaManual, setVistaManual] = useState(false);
+  const [modoMapa, setModoMapa] = useState<ModoMapaCalor>("calor");
 
-  useEffect(() => {
+  const cargarPuntos = useCallback(() => {
     if (!token) return;
     setLoading(true);
     adminFetchJson<PuntoApi[]>("/api/Admin/puntos-mapa?maxDias=60", token)
@@ -104,8 +117,10 @@ export default function AdminZones() {
           );
         } else {
           setHint(null);
-          setMapCenter(centroDesdePuntos(list));
-          setMapZoom(list.length > 8 ? 12 : 13);
+          if (!vistaManual) {
+            setMapCenter(centroDesdePuntos(list));
+            setMapZoom(list.length > 8 ? 12 : 13);
+          }
         }
       })
       .catch(() => {
@@ -113,7 +128,19 @@ export default function AdminZones() {
         setHint("No se pudieron cargar los incidentes del mapa.");
       })
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, vistaManual]);
+
+  useEffect(() => {
+    cargarPuntos();
+  }, [cargarPuntos, location.key]);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") cargarPuntos();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [cargarPuntos]);
 
   const puntosFiltrados = useMemo(() => {
     const t = filtroTexto.trim().toLowerCase();
@@ -161,6 +188,16 @@ export default function AdminZones() {
       if (lista.length > 0) centrarMapaEnLista(lista);
     },
     [puntos, filtroTexto, centrarMapaEnLista],
+  );
+
+  const heatmapPoints = useMemo(
+    () =>
+      puntosFiltrados.map((p) => ({
+        lat: p.lat,
+        lng: p.lng,
+        weight: pesoCalor(p.estado),
+      })),
+    [puntosFiltrados],
   );
 
   const marcadoresDinamicos: MapaMarcadorDinamico[] = useMemo(() => {
@@ -256,7 +293,18 @@ export default function AdminZones() {
     <div className="space-y-5 animate-in fade-in duration-500 pb-10">
       <AdminPageHeader
         title="Mapa de Calor"
-        subtitle="Ubicación de incidentes reportados en los últimos 60 días."
+        subtitle="Solo aparecen reportes con coordenadas GPS. Al aprobar/rechazar, los contadores Pendiente / Aprobado / Rechazado se actualizan al instante."
+        extra={
+          <button
+            type="button"
+            onClick={() => cargarPuntos()}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-60"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            Actualizar mapa
+          </button>
+        }
       />
 
       {hint && !loading ? (
@@ -264,6 +312,29 @@ export default function AdminZones() {
           {hint}
         </p>
       ) : null}
+
+      <div className="flex flex-wrap gap-2" aria-label="Modo de visualización">
+        {(
+          [
+            { id: "calor" as const, label: "Mapa de calor" },
+            { id: "pines" as const, label: "Solo pines" },
+            { id: "ambos" as const, label: "Calor + pines" },
+          ] as const
+        ).map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            onClick={() => setModoMapa(m.id)}
+            className={`rounded-2xl px-4 py-2 text-sm font-bold transition ${
+              modoMapa === m.id
+                ? "bg-indigo-600 text-white"
+                : "bg-indigo-50 text-indigo-800 hover:bg-indigo-100"
+            }`}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar por estado del reporte">
@@ -374,7 +445,12 @@ export default function AdminZones() {
           <GoogleMapView
             center={mapCenter}
             zoom={mapZoom}
-            marcadoresDinamicos={loading ? null : marcadoresDinamicos}
+            marcadoresDinamicos={
+              loading || modoMapa === "calor" ? null : marcadoresDinamicos
+            }
+            heatmapPoints={loading ? null : heatmapPoints}
+            showHeatmap={!loading && modoMapa !== "pines"}
+            showMarkers={!loading && modoMapa !== "calor"}
           />
 
           {vistaManual && puntosFiltrados.length > 0 && !loading ? (

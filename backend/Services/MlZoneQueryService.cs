@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using RutaSegura.ML;
 
@@ -27,10 +26,11 @@ public class MlZoneQueryService
         float iluminacion,
         float trafico,
         float incidentesRecientes,
+        float condicionClima = 0f,
         CancellationToken ct = default)
     {
         var cacheKey =
-            $"ml:zona:v1:{zona.Trim().ToLowerInvariant()}:{cantidadReportes:F2}:{hora:F1}:{iluminacion:F2}:{trafico:F2}:{incidentesRecientes:F2}";
+            $"ml:zona:v2:{zona.Trim().ToLowerInvariant()}:{cantidadReportes:F2}:{hora:F1}:{iluminacion:F2}:{trafico:F2}:{incidentesRecientes:F2}:{condicionClima:F2}";
 
         if (_redis.IsEnabled)
         {
@@ -40,7 +40,7 @@ public class MlZoneQueryService
                 var parsed = JsonSerializer.Deserialize<ZonaClasificacionResponse>(cached);
                 if (parsed is not null)
                 {
-                    parsed = parsed with { ServidoDesdeCache = true, Motor = "ML.NET Model Builder (cache Redis)" };
+                    parsed = parsed with { ServidoDesdeCache = true, Motor = "ML.NET (cache Redis)" };
                     return parsed;
                 }
             }
@@ -52,16 +52,35 @@ public class MlZoneQueryService
             trafico,
             iluminacion,
             hora,
-            incidentesRecientes);
+            incidentesRecientes,
+            condicionClima);
 
-        var display = ZoneSafetyPresentation.ToDisplay(result.Nivel, result.ConfianzaPct);
+        var nivel = result.Nivel;
+        if (condicionClima >= 0.25f)
+        {
+            var impacto = new ClimaImpacto(
+                Lluvia: condicionClima >= 0.35f,
+                Neblina: false,
+                Tormenta: condicionClima >= 0.65f,
+                VisibilidadBaja: condicionClima >= 0.45f && (hora >= 18 || hora < 6),
+                CondicionClima: condicionClima,
+                RiesgoMovilidad: condicionClima >= 0.55f ? "Alto" : "Moderado",
+                Emoji: condicionClima >= 0.65f ? "⛈️" : "🌧️",
+                Advertencias: Array.Empty<string>(),
+                RecomendacionRuta: "");
+            nivel = ClimaImpactoAnalyzer.ElevarNivelPorClima(nivel, impacto);
+        }
+
+        var display = ZoneSafetyPresentation.ToDisplay(nivel, result.ConfianzaPct);
         var response = new ZonaClasificacionResponse(
             Zona: zona.Trim(),
-            Riesgo: ZoneSafetyPresentation.ToRiesgoEtiqueta(result.Nivel),
+            Riesgo: ZoneSafetyPresentation.ToRiesgoEtiqueta(nivel),
             Confianza: Math.Round(result.ConfianzaPct / 100.0, 2),
             IndicadorVisual: display.IndicadorVisual,
             Etiqueta: display.Etiqueta,
-            Motor: "ML.NET Data Classification (SdcaMaximumEntropy)",
+            Motor: condicionClima >= 0.25f
+                ? "ML.NET + WeatherAPI (CondicionClima)"
+                : "ML.NET Data Classification (SdcaMaximumEntropy)",
             ServidoDesdeCache: false);
 
         if (_redis.IsEnabled)

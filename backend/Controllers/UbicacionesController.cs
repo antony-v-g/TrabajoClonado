@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RutaSegura.Data;
 using RutaSegura.Models;
+using RutaSegura.Services;
 
 namespace RutaSegura.Controllers
 {
@@ -13,11 +14,16 @@ namespace RutaSegura.Controllers
     public class UbicacionesController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
+        private readonly RedisService _redis;
         private readonly ILogger<UbicacionesController> _logger;
 
-        public UbicacionesController(ApplicationDbContext context, ILogger<UbicacionesController> logger)
+        public UbicacionesController(
+            ApplicationDbContext context,
+            RedisService redis,
+            ILogger<UbicacionesController> logger)
         {
             _context = context;
+            _redis = redis;
             _logger = logger;
         }
 
@@ -94,6 +100,7 @@ namespace RutaSegura.Controllers
                 return StatusCode(500, new { message = "No se pudo guardar la ubicación. Inicia sesión de nuevo." });
             }
 
+            await DashboardCacheKeys.InvalidateLugaresAsync(_redis, userId);
             return StatusCode(StatusCodes.Status201Created, item);
         }
 
@@ -117,6 +124,7 @@ namespace RutaSegura.Controllers
             item.Icono = icono;
             item.Orden = body.Orden;
             await _context.SaveChangesAsync();
+            await DashboardCacheKeys.InvalidateLugaresAsync(_redis, userId);
             return Ok(item);
         }
 
@@ -130,6 +138,7 @@ namespace RutaSegura.Controllers
             if (item is null) return NotFound();
             _context.UbicacionesGuardadas.Remove(item);
             await _context.SaveChangesAsync();
+            await DashboardCacheKeys.InvalidateLugaresAsync(_redis, userId);
             return NoContent();
         }
 

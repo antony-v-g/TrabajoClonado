@@ -7,13 +7,17 @@ import {
   ShieldAlert,
   Loader2,
   RefreshCw,
+  CloudRain,
 } from "lucide-react";
-import { Link } from "react-router";
-import { formatDistanceToNow } from "date-fns";
-import { es } from "date-fns/locale";
+import { Link, useLocation } from "react-router";
+import { formatoTiempoEnvio } from "../lib/fechaUi";
 import { useAuth } from "../contexts/AuthContext";
 import { apiUrl, authJsonHeaders } from "../lib/api";
 import { RiesgoMlBadge } from "../components/RiesgoMlBadge";
+import {
+  fetchResumenClimaInicio,
+  type ResumenClimaInicio,
+} from "../lib/climaApi";
 type AlertaRecienteApi = {
   id: number;
   titulo: string;
@@ -41,6 +45,7 @@ type LugarFrecuenteApi = {
   icono: string;
   minutosAprox: number;
   usos: number;
+  ultimoUsoEn?: string;
 };
 
 type LugaresFrecuentesResponse = {
@@ -140,14 +145,7 @@ function usarIconoEscudo(tipo: string) {
 }
 
 function textoRelativo(fechaIso: string) {
-  try {
-    return formatDistanceToNow(new Date(fechaIso), {
-      addSuffix: true,
-      locale: es,
-    });
-  } catch {
-    return "Reciente";
-  }
+  return formatoTiempoEnvio(fechaIso);
 }
 
 function rutaConDestino(nombre: string) {
@@ -156,12 +154,17 @@ function rutaConDestino(nombre: string) {
 
 export default function Home() {
   const { user, token } = useAuth();
+  const location = useLocation();
   const [alertas, setAlertas] = useState<AlertaRecienteApi[]>([]);
   const [cargandoAlertas, setCargandoAlertas] = useState(true);
   const [errorAlertas, setErrorAlertas] = useState<string | null>(null);
   const [lugares, setLugares] = useState<LugarFrecuenteApi[]>([]);
   const [cargandoLugares, setCargandoLugares] = useState(true);
   const [errorLugares, setErrorLugares] = useState<string | null>(null);
+  const [climaInicio, setClimaInicio] = useState<ResumenClimaInicio | null>(
+    null,
+  );
+  const [cargandoClima, setCargandoClima] = useState(true);
 
   const saludo = user?.nombre?.trim().split(/\s+/)[0] ?? "explorador";
 
@@ -218,14 +221,33 @@ export default function Home() {
     }
   }, [token]);
 
+  const fetchClima = useCallback(async () => {
+    setCargandoClima(true);
+    const data = await fetchResumenClimaInicio();
+    setClimaInicio(data);
+    setCargandoClima(false);
+  }, []);
+
   const recargar = useCallback(() => {
     void fetchAlertas();
     void fetchLugares();
-  }, [fetchAlertas, fetchLugares]);
+    void fetchClima();
+  }, [fetchAlertas, fetchLugares, fetchClima]);
 
   useEffect(() => {
     recargar();
-  }, [recargar]);
+  }, [recargar, location.key]);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") {
+        void fetchAlertas();
+        void fetchLugares();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [fetchAlertas, fetchLugares]);
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-10">
@@ -271,6 +293,40 @@ export default function Home() {
         </div>
       </header>
 
+      <section className="rounded-3xl border border-sky-200 bg-gradient-to-r from-sky-50 to-indigo-50 p-5 shadow-sm">
+        {cargandoClima ? (
+          <div className="flex items-center gap-2 text-sm text-sky-800">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Consultando clima en Lima…
+          </div>
+        ) : climaInicio ? (
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="rounded-2xl bg-white p-3 shadow-sm">
+                <CloudRain className="w-6 h-6 text-sky-700" />
+              </div>
+              <div>
+                <p className="font-black text-sky-950 text-lg">
+                  {climaInicio.titulo}
+                </p>
+                <p className="text-sm font-bold text-amber-800 mt-0.5">
+                  {climaInicio.subtitulo}
+                </p>
+                <p className="text-xs text-sky-800 mt-1">
+                  {climaInicio.clima.temperaturaC}°C · WeatherAPI ·{" "}
+                  {climaInicio.clima.fuente}
+                </p>
+              </div>
+            </div>
+            {climaInicio.impacto.advertencias[0] ? (
+              <p className="text-xs text-sky-900 max-w-md sm:text-right font-medium">
+                {climaInicio.impacto.advertencias[0]}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
+
       <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm p-6">
           <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
@@ -279,8 +335,8 @@ export default function Home() {
                 Alertas Recientes
               </h2>
               <p className="text-sm text-slate-500 mt-1">
-                Las marcadas como recientes tienen menor prioridad según la
-                caducidad configurada en admin.
+                Reportes de la comunidad, ordenados por fecha de envío (más
+                recientes primero).
               </p>
             </div>
             <Link
@@ -320,16 +376,8 @@ export default function Home() {
             <div className="space-y-4">
               {alertas.map((a) => {
                 const tipo = String(a.tipoIncidente || "Otro");
+                const st = classAlerta(tipo, a.nivelSeguridad);
                 const esMenor = Boolean(a.esReporteMenor);
-                const st = esMenor
-                  ? {
-                      box: "border border-slate-200 bg-slate-50/90 opacity-95",
-                      iconBg: "bg-slate-400",
-                      title: "text-slate-700",
-                      body: "text-slate-600",
-                      time: "text-slate-500",
-                    }
-                  : classAlerta(tipo, a.nivelSeguridad);
                 const titulo = a.titulo || `${tipo}: ${a.ubicacion}`;
                 const cuerpo = a.descripcion?.trim() || a.ubicacion;
                 const Icono = usarIconoEscudo(tipo)
@@ -349,8 +397,8 @@ export default function Home() {
                       <div className="flex-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-2 mb-1">
                           {esMenor ? (
-                            <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-slate-700">
-                              Reciente
+                            <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-indigo-800">
+                              Nuevo
                             </span>
                           ) : null}
                           <span className="text-base" aria-hidden>
@@ -397,7 +445,7 @@ export default function Home() {
               Ir a un Lugar Frecuente
             </h2>
             <p className="text-sm text-slate-500 mt-1">
-              Desde tu historial de rutas o ubicaciones guardadas.
+              Última búsqueda de ruta: tiempo estimado y cuándo la usaste.
             </p>
           </div>
 
@@ -436,16 +484,26 @@ export default function Home() {
                   <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-white text-3xl shadow-sm group-hover:bg-indigo-50">
                     {lugar.icono}
                   </div>
-                  <h3 className="text-base font-bold text-slate-900">
-                    {lugar.nombre}
+                  <h3 className="text-base font-bold text-slate-900 line-clamp-2">
+                    {truncar(lugar.nombre, 56)}
                   </h3>
-                  <p className="mt-2 text-xs text-slate-500 font-medium flex items-center justify-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    {lugar.minutosAprox > 0
-                      ? `${lugar.minutosAprox} min`
-                      : "Buscar ruta"}
-                    {lugar.usos > 0 && (
-                      <span className="text-slate-400"> · {lugar.usos} usos</span>
+                  <p className="mt-2 text-xs text-slate-500 font-medium flex flex-col items-center gap-1">
+                    <span className="inline-flex items-center gap-1">
+                      <Clock className="w-3 h-3 shrink-0" />
+                      {lugar.minutosAprox > 0
+                        ? `${lugar.minutosAprox} min`
+                        : "Buscar ruta"}
+                      {lugar.usos > 0 && (
+                        <span className="text-slate-400">
+                          {" "}
+                          · {lugar.usos} {lugar.usos === 1 ? "uso" : "usos"}
+                        </span>
+                      )}
+                    </span>
+                    {lugar.ultimoUsoEn && (
+                      <span className="text-indigo-600/90 font-semibold">
+                        {textoRelativo(lugar.ultimoUsoEn)}
+                      </span>
                     )}
                   </p>
                 </Link>

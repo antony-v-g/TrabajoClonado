@@ -29,6 +29,11 @@ import {
   type PreferenciasUsuario,
 } from "../lib/preferenciasUsuario";
 import { fetchReglasSistema, type ReglasSistema } from "../lib/reglasSistema";
+import {
+  fetchContextoZonaCompleto,
+  type ContextoZonaCompleto,
+} from "../lib/zonaMlApi";
+import { ZonaInteligenciaPanel } from "../components/ZonaInteligenciaPanel";
 
 const LIMA_SEARCH_BOUNDS = {
   north: -11.75,
@@ -104,6 +109,9 @@ export default function Mapa() {
   const [cargandoIncidentes, setCargandoIncidentes] = useState(false);
   const [prefs, setPrefs] = useState<PreferenciasUsuario | null>(null);
   const [reglas, setReglas] = useState<ReglasSistema | null>(null);
+  const [zonaInteligencia, setZonaInteligencia] =
+    useState<ContextoZonaCompleto | null>(null);
+  const [zonaInteligenciaLoading, setZonaInteligenciaLoading] = useState(false);
 
   const onPlacesChanged = useCallback(() => {
     const sb = searchBoxRef.current;
@@ -118,7 +126,23 @@ export default function Mapa() {
     setMapZoom(16);
     setFocusPin({ lat, lng });
     setUbicacionTexto(nombre);
+    void fetchContextoZonaCompleto(nombre, lat, lng).then(setZonaInteligencia);
   }, []);
+
+  const cargarZonaInteligencia = useCallback(async () => {
+    const pin = focusPin ?? mapCenter;
+    setZonaInteligenciaLoading(true);
+    try {
+      const data = await fetchContextoZonaCompleto(
+        ubicacionTexto,
+        pin.lat,
+        pin.lng,
+      );
+      setZonaInteligencia(data);
+    } finally {
+      setZonaInteligenciaLoading(false);
+    }
+  }, [focusPin, mapCenter, ubicacionTexto]);
 
   const cargarContexto = useCallback(async () => {
     if (!token) return;
@@ -130,10 +154,11 @@ export default function Mapa() {
         cache: "no-store",
       });
       if (r.ok) setContexto((await r.json()) as MapaContexto);
+      await cargarZonaInteligencia();
     } finally {
       setAnalizando(false);
     }
-  }, [token, ubicacionTexto]);
+  }, [token, ubicacionTexto, cargarZonaInteligencia]);
 
   const cargarIncidentes = useCallback(async () => {
     setCargandoIncidentes(true);
@@ -330,53 +355,33 @@ export default function Mapa() {
         </div>
 
         <aside className="flex flex-col gap-4">
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-sm font-black text-slate-900 uppercase tracking-wide mb-3">
-              Seguridad del lugar
-            </h2>
-            {contexto ? (
-              <div className="space-y-2">
-                <p className="text-3xl" aria-hidden>
-                  {contexto.indicadorZona}
-                </p>
-                <p className="font-bold text-slate-900">{contexto.etiquetaZona}</p>
-                <p className="text-xs text-slate-500">
-                  {contexto.reportesZona30d} reporte(s) similares (30 d)
-                </p>
-                {(contexto.pesoZonasOscurasPct ?? reglas?.pesoZonasOscurasPct) !=
-                null ? (
-                  <p className="text-xs text-indigo-700 bg-indigo-50 rounded-xl px-3 py-2 mt-2">
-                    Peso zonas oscuras activo:{" "}
-                    <strong>
-                      {contexto.pesoZonasOscurasPct ??
-                        reglas?.pesoZonasOscurasPct}
-                      %
-                    </strong>{" "}
-                    (afecta el análisis de iluminación de esta zona).
-                  </p>
-                ) : null}
-              </div>
+          <ZonaInteligenciaPanel
+            titulo="Seguridad del lugar"
+            data={zonaInteligencia}
+            loading={zonaInteligenciaLoading || analizando}
+          />
+          {contexto ? (
+            <p className="text-xs text-slate-500 px-1 -mt-2">
+              {contexto.reportesZona30d} reporte(s) similares (30 d) · peso zonas
+              oscuras{" "}
+              {contexto.pesoZonasOscurasPct ?? reglas?.pesoZonasOscurasPct ?? 0}%
+            </p>
+          ) : null}
+          <button
+            type="button"
+            disabled={analizando || !token}
+            onClick={() => void cargarContexto()}
+            className="w-full rounded-2xl bg-indigo-600 py-2.5 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {analizando ? (
+              <span className="inline-flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Analizando…
+              </span>
             ) : (
-              <p className="text-sm text-slate-500">
-                Busca un lugar o pulsa analizar.
-              </p>
+              "Analizar esta zona"
             )}
-            <button
-              type="button"
-              disabled={analizando || !token}
-              onClick={() => void cargarContexto()}
-              className="mt-4 w-full rounded-2xl bg-indigo-600 py-2.5 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-50"
-            >
-              {analizando ? (
-                <span className="inline-flex items-center justify-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Analizando…
-                </span>
-              ) : (
-                "Analizar esta zona"
-              )}
-            </button>
-          </div>
+          </button>
 
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-sm font-black text-slate-900 uppercase tracking-wide mb-2">

@@ -19,6 +19,7 @@ import { AdminPageHeader } from "../components/AdminPageHeader";
 interface ReporteItem {
   id: number;
   tipoIncidente: string;
+  tipoPredichoMl?: string | null;
   ubicacion: string;
   descripcion: string;
   estado: string;
@@ -31,6 +32,10 @@ interface ReporteItem {
   urlFotoEvidencia?: string | null;
 }
 
+function tieneCoords(reporte: ReporteItem) {
+  return Boolean(reporte.latitud?.trim() && reporte.longitud?.trim());
+}
+
 export default function AdminIncidents() {
   const { token } = useAuth();
   const [reportes, setReportes] = useState<ReporteItem[]>([]);
@@ -41,6 +46,7 @@ export default function AdminIncidents() {
   const [menuReporteId, setMenuReporteId] = useState<number | null>(null);
   const [mlAnalisis, setMlAnalisis] = useState<AnalisisMlReporte | null>(null);
   const [mlLoading, setMlLoading] = useState(false);
+  const [autoAprobando, setAutoAprobando] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(() => {
@@ -95,17 +101,46 @@ export default function AdminIncidents() {
       headers: authJsonHeaders(token),
     });
     if (response.ok) {
+      const j = (await response.json()) as { tieneCoordenadas?: boolean };
       setReportes((current) =>
         current.map((item) =>
           item.id === id ? { ...item, estado: "Aprobado" } : item,
         ),
       );
       setDetalle((d) => (d?.id === id ? { ...d, estado: "Aprobado" } : d));
-      showToast("Reporte aprobado.");
+      load();
+      showToast(
+        j.tieneCoordenadas === false
+          ? "Aprobado, pero sin GPS: no aparecerá en el mapa hasta tener coordenadas."
+          : "Reporte aprobado. Visible en mapa de calor.",
+      );
     } else {
       showToast("No se pudo aprobar. Revisa la consola de la API.");
     }
     setActionLoading(null);
+  };
+
+  const handleAutoAprobar = async () => {
+    if (!token) return;
+    setAutoAprobando(true);
+    try {
+      const r = await fetch(apiUrl("/api/Admin/reportes/auto-aprobar"), {
+        method: "POST",
+        headers: authJsonHeaders(token),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.message || "Error");
+      showToast(
+        typeof j.aprobados === "number" && j.aprobados > 0
+          ? `Auto-aprobados ${j.aprobados} reporte(s) con IA ≥ ${j.umbralPct}%.`
+          : (j.message as string) || "Ninguno superó el umbral.",
+      );
+      load();
+    } catch {
+      showToast("No se pudo ejecutar auto-aprobación ML.");
+    } finally {
+      setAutoAprobando(false);
+    }
   };
 
   const handleReject = async (id: number) => {
@@ -130,7 +165,8 @@ export default function AdminIncidents() {
         ),
       );
       setDetalle((d) => (d?.id === id ? { ...d, estado: "Rechazado" } : d));
-      showToast("Reporte rechazado.");
+      load();
+      showToast("Reporte rechazado. Sigue visible en mapa de calor (filtro Rechazado).");
     } else {
       showToast("No se pudo rechazar.");
     }
@@ -318,7 +354,22 @@ export default function AdminIncidents() {
 
       <AdminPageHeader
         title="Gestión de Reportes"
-        subtitle="Revisa, aprueba o rechaza los reportes de la comunidad."
+        subtitle="Clasificación al crear cada reporte. Revisa, auto-aprueba o modera manualmente."
+        extra={
+          <button
+            type="button"
+            disabled={autoAprobando || loading}
+            onClick={() => void handleAutoAprobar()}
+            className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-60"
+          >
+            {autoAprobando ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Brain className="w-4 h-4" />
+            )}
+            Auto-aprobar con IA
+          </button>
+        }
       />
 
       <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
@@ -351,6 +402,18 @@ export default function AdminIncidents() {
                   <div className="font-bold text-slate-900">
                     {reporte.tipoIncidente}
                   </div>
+                  {reporte.tipoPredichoMl &&
+                  reporte.tipoPredichoMl !== reporte.tipoIncidente ? (
+                    <div className="mt-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-full px-2 py-0.5 inline-block">
+                      ML: {reporte.tipoPredichoMl}
+                    </div>
+                  ) : null}
+                  {reporte.nivelConfianzaIA != null &&
+                  reporte.nivelConfianzaIA >= 70 ? (
+                    <div className="mt-1 text-[10px] font-bold text-emerald-700">
+                      IA {Math.round(reporte.nivelConfianzaIA)}%
+                    </div>
+                  ) : null}
                   <div className="text-xs text-slate-500">
                     Por:{" "}
                     {reporte.esAnonimo
@@ -362,6 +425,11 @@ export default function AdminIncidents() {
                   <div className="font-bold text-slate-900 line-clamp-2">
                     {reporte.ubicacion}
                   </div>
+                  {!tieneCoords(reporte) ? (
+                    <div className="mt-1 text-[10px] font-bold text-rose-600">
+                      Sin GPS — no aparece en mapa de calor
+                    </div>
+                  ) : null}
                   <div className="text-xs text-slate-500">
                     {new Date(reporte.fechaReporte).toLocaleString("es-PE")}
                   </div>

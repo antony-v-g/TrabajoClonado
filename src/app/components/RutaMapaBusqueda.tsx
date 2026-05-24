@@ -7,7 +7,7 @@ import {
   GOOGLE_MAPS_LOADER_DISABLED,
 } from "../lib/mapsEnv";
 import { GoogleMapsKeyTroubleshoot } from "./GoogleMapsKeyTroubleshoot";
-import { LIMA_CENTRO } from "./GoogleMap";
+import { LIMA_CENTRO } from "../lib/geo";
 
 const mapContainer = (h: number) => ({
   width: "100%",
@@ -66,11 +66,23 @@ export function RutaMapaBusqueda({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !origin || !dest) return;
-    const b = new google.maps.LatLngBounds();
-    b.extend(origin);
-    b.extend(dest);
-    paths.forEach((p) => p.path.forEach((pt) => b.extend(pt)));
-    map.fitBounds(b, 64);
+    const lats = [origin.lat, dest.lat];
+    const lngs = [origin.lng, dest.lng];
+    for (const layer of paths) {
+      for (const pt of layer.path) {
+        lats.push(pt.lat);
+        lngs.push(pt.lng);
+      }
+    }
+    map.fitBounds(
+      {
+        north: Math.max(...lats),
+        south: Math.min(...lats),
+        east: Math.max(...lngs),
+        west: Math.min(...lngs),
+      },
+      64,
+    );
   }, [origin, dest, paths]);
 
   if (!mapKey) {

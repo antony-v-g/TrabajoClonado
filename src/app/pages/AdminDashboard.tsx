@@ -9,10 +9,10 @@ import {
   CartesianGrid,
 } from "recharts";
 import { Link } from "react-router";
-import { Users, AlertTriangle, MapPin, Bell, RefreshCw } from "lucide-react";
+import { Users, AlertTriangle, MapPin, Bell, RefreshCw, CloudRain } from "lucide-react";
 import { apiUrl, authJsonHeaders, readApiErrorMessage } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
-import { adminFetchJson } from "../lib/adminApi";
+import { adminFetchJson, fetchPrediccionesAdmin, type PrediccionZona } from "../lib/adminApi";
 import { AdminPageHeader } from "../components/AdminPageHeader";
 
 type ResumenApi = {
@@ -39,6 +39,20 @@ type ResumenApi = {
   mlZonasActivo?: boolean;
 };
 
+type AnalisisClimaApi = {
+  totalReportes: number;
+  reportesNocturnos: number;
+  porcentajeNocturno: number;
+  climaActual: { descripcion: string; temperaturaC: number };
+  climaImpacto: { emoji: string; riesgoMovilidad: string; condicionClima: number };
+  motorPredictivo: {
+    titulo: string;
+    insight: string;
+    recomendacionAdmin: string;
+  };
+  distribucionPorHora: { hora: string; reportes: number }[];
+};
+
 function formatDelta(pct: number) {
   if (pct > 0) return `+${pct}% en la semana`;
   if (pct < 0) return `${pct}% respecto al periodo anterior`;
@@ -58,17 +72,27 @@ export default function AdminDashboard() {
   const [err, setErr] = useState<string | null>(null);
   const [genMsg, setGenMsg] = useState<string | null>(null);
   const [genLoading, setGenLoading] = useState(false);
+  const [climaAnalisis, setClimaAnalisis] = useState<AnalisisClimaApi | null>(
+    null,
+  );
+  const [predicciones, setPredicciones] = useState<PrediccionZona[]>([]);
 
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     setErr(null);
     try {
-      const { data: j } = await adminFetchJson<ResumenApi>(
-        "/api/Admin/resumen",
-        token,
-      );
+      const [{ data: j }, climaRes, preds] = await Promise.all([
+        adminFetchJson<ResumenApi>("/api/Admin/resumen", token),
+        adminFetchJson<AnalisisClimaApi>(
+          "/api/Admin/analisis-clima-incidentes",
+          token,
+        ),
+        fetchPrediccionesAdmin(token, 5),
+      ]);
       setData(j);
+      setClimaAnalisis(climaRes.data);
+      setPredicciones(preds);
     } catch (e) {
       if (e instanceof TypeError) {
         setErr(
@@ -257,6 +281,86 @@ export default function AdminDashboard() {
           <p className="mt-2 text-sm text-slate-500">Alertas sistema (7d)</p>
         </div>
       </div>
+
+      {climaAnalisis ? (
+        <div className="rounded-[2rem] border border-sky-200 bg-gradient-to-br from-sky-50 to-indigo-50 p-6 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+            <div>
+              <h2 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                <CloudRain className="w-6 h-6 text-sky-700" />
+                Motor predictivo · clima e incidentes
+              </h2>
+              <p className="text-sm text-slate-600 mt-1">
+                {climaAnalisis.motorPredictivo.titulo}
+              </p>
+            </div>
+            <span className="rounded-2xl bg-white px-3 py-1.5 text-sm font-bold text-sky-900 border border-sky-200">
+              {climaAnalisis.climaImpacto.emoji}{" "}
+              {climaAnalisis.climaActual.descripcion}
+            </span>
+          </div>
+          <p className="text-sm text-slate-800 font-medium leading-relaxed">
+            {climaAnalisis.motorPredictivo.insight}
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl bg-white/80 border border-slate-200 p-4">
+              <p className="text-xs font-bold text-slate-500 uppercase">
+                Reportes nocturnos
+              </p>
+              <p className="text-2xl font-black text-slate-900 mt-1">
+                {climaAnalisis.reportesNocturnos}
+              </p>
+              <p className="text-xs text-slate-600">
+                {climaAnalisis.porcentajeNocturno}% del total
+              </p>
+            </div>
+            <div className="rounded-2xl bg-white/80 border border-slate-200 p-4">
+              <p className="text-xs font-bold text-slate-500 uppercase">
+                Riesgo movilidad (hoy)
+              </p>
+              <p className="text-2xl font-black text-amber-800 mt-1">
+                {climaAnalisis.climaImpacto.riesgoMovilidad}
+              </p>
+            </div>
+            <div className="rounded-2xl bg-white/80 border border-slate-200 p-4">
+              <p className="text-xs font-bold text-slate-500 uppercase">
+                Acción sugerida
+              </p>
+              <p className="text-xs text-slate-800 mt-2 font-medium">
+                {climaAnalisis.motorPredictivo.recomendacionAdmin}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {predicciones.length > 0 ? (
+        <div className="rounded-[2rem] border border-violet-200 bg-gradient-to-br from-violet-50 to-fuchsia-50 p-6 shadow-sm">
+          <h2 className="text-xl font-black text-slate-900 mb-1">
+            Motor predictivo · zonas
+          </h2>
+          <p className="text-sm text-slate-600 mb-4">
+            Compara reportes de los últimos 7 días vs la semana anterior.
+          </p>
+          <div className="space-y-3">
+            {predicciones.map((p) => (
+              <div
+                key={p.ubicacion}
+                className="rounded-2xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm"
+              >
+                <p className="text-sm font-bold text-slate-900 leading-snug">
+                  {p.mensajePredictivo}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {p.indicadorZona} {p.etiquetaZona} · {p.reportes7d} reporte(s) ·{" "}
+                  {p.deltaPct >= 0 ? "+" : ""}
+                  {p.deltaPct}% vs sem. ant.
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[1.4fr_0.6fr]">
         <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">

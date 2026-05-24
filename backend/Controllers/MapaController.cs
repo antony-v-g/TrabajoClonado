@@ -17,17 +17,20 @@ public class MapaController : ControllerBase
     private readonly RedisService _redis;
     private readonly MlNetService _ml;
     private readonly SistemaConfigService _config;
+    private readonly ExternalApisService _external;
 
     public MapaController(
         ApplicationDbContext db,
         RedisService redis,
         MlNetService ml,
-        SistemaConfigService config)
+        SistemaConfigService config,
+        ExternalApisService external)
     {
         _db = db;
         _redis = redis;
         _ml = ml;
         _config = config;
+        _external = external;
     }
 
     private int GetUserId() =>
@@ -286,6 +289,12 @@ public class MapaController : ControllerBase
 
         await _ml.EnsureModelsAsync(ct);
         var ubicacion = body?.UbicacionTexto?.Trim() ?? "Ubicación en mapa";
+        var lat = body?.Latitud ?? -12.0464;
+        var lon = body?.Longitud ?? -77.0428;
+        var horaLocal = ClimaImpactoAnalyzer.HoraLocalPeru();
+        var climaCtx = await _external.GetClimaContextoAsync(lat, lon, horaLocal, ct);
+        var impacto = climaCtx.Impacto;
+
         var cfgSos = await _config.GetAsync(ct);
         var reportesZona = await ContarReportesZonaAsync(ubicacion, ct);
         var enZonaSos = await ListarReportesZonaAsync(ubicacion, ct);
@@ -301,12 +310,27 @@ public class MapaController : ControllerBase
             baseSos,
             cfgSos.PesoZonasOscurasPct,
             SistemaConfigService.ContarZonaOscuraEnLista(enZonaSos));
+        var ilumAjustada = ClimaImpactoAnalyzer.AjustarIluminacion(features.Iluminacion, impacto);
         var mlZona = _ml.ClassifyZoneSafety(
             features.CantidadReportes,
             features.Trafico,
-            features.Iluminacion,
-            features.Hora);
-        var display = ZoneSafetyPresentation.ToDisplay(mlZona.Nivel, mlZona.ConfianzaPct);
+            ilumAjustada,
+            features.Hora,
+            incidentesRecientes: Math.Clamp(reportesZona / 6f, 0f, 1f),
+            condicionClima: impacto.CondicionClima);
+        var nivelElevado = ClimaImpactoAnalyzer.ElevarNivelPorClima(mlZona.Nivel, impacto);
+        var display = ZoneSafetyPresentation.ToDisplay(nivelElevado, mlZona.ConfianzaPct);
+
+        var motivos = new List<string>();
+        if (display.Nivel.Contains("peligro", StringComparison.OrdinalIgnoreCase)
+            || display.Nivel.Contains("moder", StringComparison.OrdinalIgnoreCase))
+            motivos.Add($"Zona {display.Etiqueta.ToLowerInvariant()}");
+        if (features.Iluminacion < 0.35f || ilumAjustada < 0.35f)
+            motivos.Add("Zona oscura / baja iluminación");
+        if (impacto.Lluvia) motivos.Add("Lluvia activa");
+        if (impacto.Tormenta) motivos.Add("Tormenta o visibilidad crítica");
+        if (impacto.Neblina) motivos.Add("Neblina");
+        if (reportesZona >= 2) motivos.Add("Reportes recientes en la zona");
 
         var contactos = await _db.Contactos.AsNoTracking()
             .Where(c => c.UsuarioId == userId)
@@ -321,12 +345,15 @@ public class MapaController : ControllerBase
             : display.Nivel.Contains("moder", StringComparison.OrdinalIgnoreCase)
                 ? 68
                 : 45;
+        riesgoPct = ClimaImpactoAnalyzer.AjustarRiesgoSosPct(riesgoPct, impacto, reportesZona);
+
+        var nivelRiesgoTexto = riesgoPct >= 80 ? "Alto" : riesgoPct >= 60 ? "Moderado" : "Bajo";
 
         var alerta = new AlertaSistema
         {
             Titulo = $"SOS — {usuario.Nombre}",
             Detalle =
-                $"Alerta de emergencia desde el mapa. Zona ML.NET: {display.Etiqueta}. Ubicación: {ubicacion}.",
+                $"Alerta de emergencia. Nivel contextual: {nivelRiesgoTexto}. Clima: {climaCtx.Clima.Descripcion}. Zona ML: {display.Etiqueta}. Ubicación: {ubicacion}.",
             Prioridad = "alta",
             Origen = "Usuario",
             UbicacionRef = ubicacion,
@@ -355,7 +382,11 @@ public class MapaController : ControllerBase
             display.IndicadorVisual,
             display.Etiqueta,
             display.ConfianzaMlPct,
-            DateTime.UtcNow);
+            DateTime.UtcNow,
+            nivelRiesgoTexto,
+            motivos,
+            climaCtx.Clima.Descripcion,
+            riesgoPct);
 
         await GuardarEventoRedisAsync(userId, "sos", payload, ct);
 
@@ -480,4 +511,8 @@ public record MapaEventoResponse(
     string? IndicadorZona,
     string? EtiquetaZona,
     double? ConfianzaMlPct,
-    DateTime ProcesadoEnUtc);
+    DateTime ProcesadoEnUtc,
+    string? NivelRiesgoContextual = null,
+    IReadOnlyList<string>? MotivosRiesgo = null,
+    string? ClimaResumen = null,
+    int? RiesgoEstimadoPct = null);

@@ -51,12 +51,17 @@ public class DashboardController : ControllerBase
 
         var agrupados = historial
             .GroupBy(h => h.DestinoTexto.Trim())
-            .Select(g => new LugarFrecuenteDto(
-                g.Key,
-                IconoParaDestino(g.Key),
-                (int)Math.Round(g.Average(x => x.MinutosAprox)),
-                g.Count()))
-            .OrderByDescending(x => x.Usos)
+            .Select(g =>
+            {
+                var ultimo = g.OrderByDescending(x => x.CreadoEn).First();
+                return new LugarFrecuenteDto(
+                    g.Key,
+                    IconoParaDestino(g.Key),
+                    ultimo.MinutosAprox,
+                    g.Count(),
+                    ultimo.CreadoEn);
+            })
+            .OrderByDescending(x => x.UltimoUsoEn)
             .Take(4)
             .ToList();
 
@@ -72,12 +77,13 @@ public class DashboardController : ControllerBase
             agrupados = guardadas
                 .Select(u =>
                     new LugarFrecuenteDto(
-                        u.Etiqueta,
+                        u.Direccion.Trim().Length > 0 ? u.Direccion.Trim() : u.Etiqueta,
                         string.IsNullOrWhiteSpace(u.Icono)
                             ? IconoParaDestino(u.Etiqueta)
                             : u.Icono!,
                         0,
-                        0))
+                        0,
+                        u.CreadoEn))
                 .ToList();
         }
 
@@ -115,7 +121,8 @@ public record LugarFrecuenteDto(
     string Nombre,
     string Icono,
     int MinutosAprox,
-    int Usos);
+    int Usos,
+    DateTime UltimoUsoEn);
 
 public record LugaresFrecuentesResponse(
     IReadOnlyList<LugarFrecuenteDto> Lugares,
@@ -126,5 +133,12 @@ public record LugaresFrecuentesResponse(
 
 public static class DashboardCacheKeys
 {
-    public static string Lugares(int userId) => $"dashboard:lugares:v1:{userId}";
+    public static string Lugares(int userId) => $"dashboard:lugares:v2:{userId}";
+
+    public static async Task InvalidateLugaresAsync(RedisService redis, int userId)
+    {
+        if (!redis.IsEnabled) return;
+        await redis.RemoveAsync(Lugares(userId));
+        await redis.RemoveAsync($"dashboard:lugares:v1:{userId}");
+    }
 }

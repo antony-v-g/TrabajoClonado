@@ -1,1 +1,0 @@
-import{k as a}from"./index-BeBE2e_O.js";async function e(){try{const t=await fetch(a("/api/config/reglas-sistema"),{cache:"no-store"});return t.ok?await t.json():null}catch{return null}}export{e as f};

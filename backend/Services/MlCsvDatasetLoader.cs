@@ -43,6 +43,7 @@ public class MlCsvDatasetLoader
                 Iluminacion = Clamp01(r.Iluminacion),
                 Trafico = Clamp01(r.Trafico),
                 IncidentesRecientes = Clamp01(r.IncidentesRecientes),
+                CondicionClima = Clamp01(r.CondicionClima),
             })
             .ToList();
 
@@ -96,6 +97,9 @@ public class MlCsvDatasetLoader
 
         [LoadColumn(5)]
         public float IncidentesRecientes { get; set; }
+
+        [LoadColumn(6)]
+        public float CondicionClima { get; set; }
     }
 
     private sealed class RouteRecommendationCsvRow

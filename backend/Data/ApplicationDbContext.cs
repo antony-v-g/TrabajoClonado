@@ -120,6 +120,7 @@ namespace RutaSegura.Data
                     new Catalogo { Tipo = "TipoReporte", Codigo = "Asalto", Nombre = "Asalto", Descripcion = "Asalto a persona", Activo = true, CreadoEn = DateTime.UtcNow },
                     new Catalogo { Tipo = "TipoReporte", Codigo = "Accidente", Nombre = "Accidente", Descripcion = "Accidente de tránsito", Activo = true, CreadoEn = DateTime.UtcNow },
                     new Catalogo { Tipo = "TipoReporte", Codigo = "ZonaOscura", Nombre = "Zona Oscura", Descripcion = "Área con poca iluminación", Activo = true, CreadoEn = DateTime.UtcNow },
+                    new Catalogo { Tipo = "TipoReporte", Codigo = "Vandalismo", Nombre = "Vandalismo", Descripcion = "Daños a propiedad pública o privada", Activo = true, CreadoEn = DateTime.UtcNow },
                     new Catalogo { Tipo = "TipoReporte", Codigo = "Otro", Nombre = "Otro", Descripcion = "Otro tipo de reporte", Activo = true, CreadoEn = DateTime.UtcNow },
                 };
                 Catalogos.AddRange(catalogos);
@@ -253,6 +254,20 @@ namespace RutaSegura.Data
                         AlertasRiesgoTiempoReal = true,
                         AvisoAutomaticoLlegada = true,
                         ActualizadoEn = DateTime.UtcNow,
+                    });
+            }
+
+            if (!Catalogos.Any(c => c.Codigo == "Vandalismo"))
+            {
+                Catalogos.Add(
+                    new Catalogo
+                    {
+                        Tipo = "TipoReporte",
+                        Codigo = "Vandalismo",
+                        Nombre = "Vandalismo",
+                        Descripcion = "Daños a propiedad pública o privada",
+                        Activo = true,
+                        CreadoEn = DateTime.UtcNow,
                     });
             }
 

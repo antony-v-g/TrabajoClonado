@@ -12,6 +12,34 @@ using RutaSegura.Data;
 using RutaSegura.ML;
 using RutaSegura.Services;
 
+static void LoadDotEnvFromProjectRoot()
+{
+    var candidates = new[]
+    {
+        Path.Combine(Directory.GetCurrentDirectory(), ".env"),
+        Path.Combine(Directory.GetCurrentDirectory(), "..", ".env"),
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".env"),
+    };
+    foreach (var path in candidates.Select(Path.GetFullPath).Distinct())
+    {
+        if (!File.Exists(path)) continue;
+        foreach (var raw in File.ReadAllLines(path))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line.StartsWith('#')) continue;
+            var eq = line.IndexOf('=');
+            if (eq <= 0) continue;
+            var key = line[..eq].Trim();
+            var val = line[(eq + 1)..].Trim().Trim('"');
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(key)))
+                Environment.SetEnvironmentVariable(key, val);
+        }
+        break;
+    }
+}
+
+LoadDotEnvFromProjectRoot();
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Entrenar modelos ML sin Swagger ni Model Builder (VS 2026): dotnet run -- --train-ml
@@ -44,6 +72,8 @@ builder.Services
     {
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
         options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+        options.JsonSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
+        options.JsonSerializerOptions.Converters.Add(new NullableUtcDateTimeJsonConverter());
     });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -101,6 +131,7 @@ builder.Services.AddCors(options =>
 
 
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("push");
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 
@@ -111,11 +142,16 @@ builder.Services.AddSingleton<MlModelTrainer>();
 builder.Services.AddSingleton<MlNetService>();
 builder.Services.AddScoped<SistemaConfigService>();
 builder.Services.AddScoped<DashboardAlertasService>();
+builder.Services.AddScoped<AdminPredictivoService>();
+builder.Services.AddScoped<AlertasInteligentesService>();
+builder.Services.AddScoped<PushNotificationService>();
 builder.Services.AddScoped<UsuarioPreferenciasService>();
 builder.Services.AddSingleton<MlCsvDatasetLoader>();
 builder.Services.AddScoped<MlZoneQueryService>();
 builder.Services.AddScoped<ExternalApisService>();
+builder.Services.AddScoped<ReporteGeocodingService>();
 builder.Services.AddHostedService<MlStartupHostedService>();
+builder.Services.AddHostedService<AlertasInteligentesBackgroundService>();
 
 
 var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT key is missing.");

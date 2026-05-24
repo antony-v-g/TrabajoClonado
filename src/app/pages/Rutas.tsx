@@ -1,4 +1,12 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import {
+  useState,
+  useCallback,
+  useMemo,
+  useEffect,
+  useRef,
+  lazy,
+  Suspense,
+} from "react";
 import { useSearchParams } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
 import { apiUrl, authJsonHeaders } from "../lib/api";
@@ -30,20 +38,26 @@ import {
   type PreferenciasUsuario,
 } from "../lib/preferenciasUsuario";
 import { fetchReglasSistema, type ReglasSistema } from "../lib/reglasSistema";
-import { useJsApiLoader } from "@react-google-maps/api";
-import { RutaMapaBusqueda } from "../components/RutaMapaBusqueda";
+const RutaMapaBusqueda = lazy(() =>
+  import("../components/RutaMapaBusqueda").then((m) => ({
+    default: m.RutaMapaBusqueda,
+  })),
+);
 import { buildRoutePath, haversineKm, hashString } from "../lib/geo";
 import {
   getGoogleMapsApiKey,
-  getGoogleMapsLoaderConfig,
-  GOOGLE_MAPS_LOADER_DISABLED,
 } from "../lib/mapsEnv";
 import {
-  buildPeruGeocodeQuery,
-  pickBestGeocodeResult,
-  LIMA_METRO_BOUNDS,
   origenPideGpsFijo,
 } from "../lib/limaGeocode";
+import { fetchGoogleDirectionsRoutes } from "../lib/googleDirections";
+import { geocodificarDireccionGoogle } from "../lib/googleGeocode";
+import {
+  fetchContextoZonaCompleto,
+  fetchRecomendacionesMlConClima,
+  type ContextoZonaCompleto,
+} from "../lib/zonaMlApi";
+import { ZonaInteligenciaPanel } from "../components/ZonaInteligenciaPanel";
 import type { LatLngLiteral } from "../types/maps";
 
 type RutaOpcion = {
@@ -78,44 +92,8 @@ const descEquilibradas = [
   "Pasa frente a un mercado (ambiente concurrido) y luego reincorpora a avenida amplia.",
 ];
 
-function geocodificarDireccion(
-  address: string,
-): Promise<LatLngLiteral> {
-  return new Promise((resolve, reject) => {
-    const g = new google.maps.Geocoder();
-    const q = buildPeruGeocodeQuery(address);
-    const bounds = new google.maps.LatLngBounds(
-      {
-        lat: LIMA_METRO_BOUNDS.south,
-        lng: LIMA_METRO_BOUNDS.west,
-      } as google.maps.LatLngLiteral,
-      {
-        lat: LIMA_METRO_BOUNDS.north,
-        lng: LIMA_METRO_BOUNDS.east,
-      } as google.maps.LatLngLiteral,
-    );
-    g.geocode(
-      {
-        address: q,
-        region: "pe",
-        componentRestrictions: { country: "pe" },
-        bounds,
-      },
-      (results, status) => {
-        if (status !== "OK" || !results?.length) {
-          reject(
-            new Error(
-              "No se encontró esa dirección. Incluye distrito o referencia; si escribes solo \"Lima\", procura calle, número o código postal (ej. 15xxx).",
-            ),
-          );
-          return;
-        }
-        const best = pickBestGeocodeResult(results, address);
-        const l = best.geometry.location;
-        resolve({ lat: l.lat(), lng: l.lng() });
-      },
-    );
-  });
+function geocodificarDireccion(address: string): Promise<LatLngLiteral> {
+  return geocodificarDireccionGoogle(address);
 }
 
 /**
@@ -241,6 +219,36 @@ function generarRutas(
   ];
 }
 
+async function resolverOpcionesRuta(
+  origin: LatLngLiteral,
+  dest: LatLngLiteral,
+  mode: "pedestrian" | "bike",
+  destinoTexto: string,
+): Promise<{ opts: RutaOpcion[]; fromGoogle: boolean }> {
+  const simulated = generarRutas(origin, dest, mode, destinoTexto);
+  const fromGoogle = await fetchGoogleDirectionsRoutes(
+    origin,
+    dest,
+    mode,
+    destinoTexto,
+  );
+  if (!fromGoogle?.length) {
+    return { opts: simulated, fromGoogle: false };
+  }
+  const byId = new globalThis.Map(fromGoogle.map((r) => [r.id, r as RutaOpcion]));
+  for (const sim of simulated) {
+    if (!byId.has(sim.id)) byId.set(sim.id, sim);
+  }
+  const order: Array<"safe" | "fast" | "balanced"> = ["safe", "fast", "balanced"];
+  const merged = order
+    .map((id) => byId.get(id))
+    .filter((x): x is RutaOpcion => x != null);
+  return {
+    opts: merged.length >= 3 ? merged : simulated,
+    fromGoogle: true,
+  };
+}
+
 const ML_VARIANT_TO_ROUTE: Record<string, string> = {
   segura: "safe",
   rapida: "fast",
@@ -258,19 +266,32 @@ async function cargarRecomendacionesMl(
   token: string,
   origen: string,
   destino: string,
-): Promise<MlRecomendacion[]> {
-  const params = new URLSearchParams({ origen, destino });
-  const r = await fetch(apiUrl(`/api/Ml/recomendar-rutas?${params}`), {
-    headers: authJsonHeaders(token),
-  });
-  if (!r.ok) return [];
-  const j = (await r.json()) as { recomendaciones?: MlRecomendacion[] };
-  return j.recomendaciones ?? [];
+  origLat?: number,
+  origLng?: number,
+  destLat?: number,
+  destLng?: number,
+): Promise<{ recs: MlRecomendacion[]; advertenciasClima: string[]; influidoPorClima: boolean }> {
+  const data = await fetchRecomendacionesMlConClima(
+    token,
+    origen,
+    destino,
+    origLat,
+    origLng,
+    destLat,
+    destLng,
+  );
+  if (!data) return { recs: [], advertenciasClima: [], influidoPorClima: false };
+  return {
+    recs: data.recomendaciones,
+    advertenciasClima: data.advertenciasClima,
+    influidoPorClima: data.influidoPorClima,
+  };
 }
 
 function ordenarRutasConMl(
   opts: RutaOpcion[],
   recs: MlRecomendacion[],
+  influidoPorClima = false,
 ): RutaOpcion[] {
   if (recs.length === 0) return opts;
   const order = recs
@@ -278,7 +299,7 @@ function ordenarRutasConMl(
     .filter((id) => opts.some((o) => o.id === id));
   if (order.length === 0) return opts;
 
-  const byId = new Map(opts.map((o) => [o.id, o]));
+  const byId = new globalThis.Map(opts.map((o) => [o.id, o]));
   const sorted: RutaOpcion[] = [];
   for (const id of order) {
     const op = byId.get(id);
@@ -292,11 +313,14 @@ function ordenarRutasConMl(
   const topId = top ? ML_VARIANT_TO_ROUTE[top.varianteId] : null;
   return sorted.map((op) => {
     if (op.id !== topId) return op;
+    const extraClima = influidoPorClima
+      ? " ☔ Priorizada por condiciones climáticas adversas."
+      : "";
     return {
       ...op,
       tag: "RECOMENDADA",
       tagClass: "bg-indigo-600",
-      descripcion: op.descripcion,
+      descripcion: `${op.descripcion}${extraClima}`,
     };
   });
 }
@@ -309,11 +333,6 @@ export default function Rutas() {
     null,
   );
   const mapKey = getGoogleMapsApiKey();
-  const { isLoaded: mapsReady } = useJsApiLoader(
-    mapKey
-      ? getGoogleMapsLoaderConfig(mapKey)
-      : GOOGLE_MAPS_LOADER_DISABLED,
-  );
 
   const [step, setStep] = useState<"buscar" | "alternativas" | "navegando">(
     "buscar",
@@ -331,6 +350,12 @@ export default function Rutas() {
   const [usarGpsOrigen, setUsarGpsOrigen] = useState(true);
   const [prefs, setPrefs] = useState<PreferenciasUsuario | null>(null);
   const [reglas, setReglas] = useState<ReglasSistema | null>(null);
+  const [zonaDestino, setZonaDestino] = useState<ContextoZonaCompleto | null>(
+    null,
+  );
+  const [zonaDestinoLoading, setZonaDestinoLoading] = useState(false);
+  const [rutasGoogle, setRutasGoogle] = useState(false);
+  const [advertenciasClima, setAdvertenciasClima] = useState<string[]>([]);
   const llegueBienOkRef = useRef(false);
   const prevStepRef = useRef(step);
 
@@ -470,29 +495,40 @@ export default function Rutas() {
       setSearchError("Configura VITE_GOOGLE_MAPS_API_KEY en .env");
       return;
     }
-    if (!mapsReady || !window.google?.maps) {
-      setSearchError("Mapa aún cargando, espera un momento.");
-      return;
-    }
     if (!destinoTexto.trim()) {
       setSearchError("Escribe un destino en Lima.");
       return;
     }
     setIsSearching(true);
     setSearchError(null);
+    setZonaDestino(null);
     try {
       const o = await resolverOrigen(origenTexto, usarGpsOrigen);
       const d = await geocodificarDireccion(destinoTexto.trim());
       setOrigen(o);
       setDest(d);
-      let opts = generarRutas(o, d, mode, destinoTexto);
+      const { opts: baseOpts, fromGoogle } = await resolverOpcionesRuta(
+        o,
+        d,
+        mode,
+        destinoTexto,
+      );
+      setRutasGoogle(fromGoogle);
+      let opts = baseOpts;
+      setAdvertenciasClima([]);
       if (token) {
-        const recs = await cargarRecomendacionesMl(
-          token,
-          origenTexto.trim() || "Origen",
-          destinoTexto.trim(),
-        );
-        opts = ordenarRutasConMl(opts, recs);
+        const { recs, advertenciasClima: adv, influidoPorClima } =
+          await cargarRecomendacionesMl(
+            token,
+            origenTexto.trim() || "Origen",
+            destinoTexto.trim(),
+            o.lat,
+            o.lng,
+            d.lat,
+            d.lng,
+          );
+        setAdvertenciasClima(adv);
+        opts = ordenarRutasConMl(opts, recs, influidoPorClima);
       }
       opts = aplicarPreferenciaRutasNocturnas(
         opts,
@@ -501,6 +537,13 @@ export default function Rutas() {
       );
       setOpciones(opts);
       setStep("alternativas");
+      setZonaDestinoLoading(true);
+      void fetchContextoZonaCompleto(destinoTexto.trim(), d.lat, d.lng).then(
+        (ctx) => {
+          setZonaDestino(ctx);
+          setZonaDestinoLoading(false);
+        },
+      );
       void registrarBusquedaEnHistorial(
         opts,
         origenTexto.trim() || "Origen",
@@ -557,20 +600,28 @@ export default function Rutas() {
 
         <div className="flex-1 min-h-[280px] relative">
           {mapKey ? (
-            <RutaMapaBusqueda
-              origin={origen}
-              dest={dest}
-              paths={[
-                {
-                  id: "nav",
-                  color: rutaElegida.color,
-                  path: rutaElegida.path,
-                  opacity: 0.9,
-                },
-              ]}
-              height={400}
-              highlightId="nav"
-            />
+            <Suspense
+              fallback={
+                <div className="grid place-items-center rounded-3xl border border-slate-200 bg-slate-50 min-h-[280px] text-slate-500">
+                  Cargando mapa…
+                </div>
+              }
+            >
+              <RutaMapaBusqueda
+                origin={origen}
+                dest={dest}
+                paths={[
+                  {
+                    id: "nav",
+                    color: rutaElegida.color,
+                    path: rutaElegida.path,
+                    opacity: 0.9,
+                  },
+                ]}
+                height={400}
+                highlightId="nav"
+              />
+            </Suspense>
           ) : (
             <div className="h-full bg-slate-200 grid place-items-center p-4">
               Sin clave de mapa
@@ -716,38 +767,76 @@ export default function Rutas() {
 
       {step === "alternativas" && origen && dest && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-8 duration-700">
+          <div className="grid gap-4 xl:grid-cols-[1fr_300px]">
+            <div className="space-y-4">
           {mapKey ? (
-            <RutaMapaBusqueda
-              origin={origen}
-              dest={dest}
-              paths={capasMapa}
-              height={300}
-            />
+            <Suspense
+              fallback={
+                <div className="grid place-items-center rounded-3xl border border-slate-200 bg-slate-50 min-h-[300px] text-slate-500">
+                  Cargando mapa…
+                </div>
+              }
+            >
+              <RutaMapaBusqueda
+                origin={origen}
+                dest={dest}
+                paths={capasMapa}
+                height={300}
+              />
+            </Suspense>
           ) : null}
 
-          <div className="flex justify-between items-center">
+          <div className="flex flex-wrap justify-between items-center gap-2">
             <h2 className="text-xl font-black text-slate-900 flex items-center gap-2">
               Resultados{" "}
               <span className="text-sm font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
                 3 opciones
               </span>
             </h2>
-            <button
-              type="button"
-              onClick={() => {
-                setStep("buscar");
-                setOpciones([]);
-              }}
-              className="text-sm font-bold text-slate-500 hover:text-indigo-600"
-            >
-              Nueva búsqueda
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {rutasGoogle ? (
+                <span className="text-xs font-bold rounded-full bg-emerald-100 text-emerald-800 px-3 py-1">
+                  Google Directions API
+                </span>
+              ) : (
+                <span className="text-xs font-bold rounded-full bg-slate-100 text-slate-600 px-3 py-1">
+                  Rutas estimadas (fallback)
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setStep("buscar");
+                  setOpciones([]);
+                  setZonaDestino(null);
+                  setAdvertenciasClima([]);
+                }}
+                className="text-sm font-bold text-slate-500 hover:text-indigo-600"
+              >
+                Nueva búsqueda
+              </button>
+            </div>
           </div>
+
+          {advertenciasClima.length > 0 ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 mb-5 space-y-1">
+              <p className="text-xs font-black text-amber-950 uppercase tracking-wide">
+                Condiciones climáticas en el trayecto
+              </p>
+              {advertenciasClima.map((a) => (
+                <p key={a} className="text-sm text-amber-900 font-medium">
+                  {a}
+                </p>
+              ))}
+            </div>
+          ) : null}
 
           <div className="grid md:grid-cols-3 gap-5">
             {opciones.map((op) => {
-              const borderClass =
-                op.id === "safe"
+              const esRecomendada = op.tag === "RECOMENDADA";
+              const borderClass = esRecomendada
+                ? "border-2 border-indigo-500 shadow-[0_8px_30px_rgba(79,70,229,0.12)]"
+                : op.id === "safe"
                   ? "border-2 border-emerald-500 shadow-[0_8px_30px_rgba(16,185,129,0.12)]"
                   : "border border-slate-200";
               return (
@@ -803,23 +892,26 @@ export default function Rutas() {
                       type="button"
                       onClick={() => startNavigation(op)}
                       className={
-                        op.id === "safe"
-                          ? "w-full bg-emerald-500 text-white font-bold py-3.5 rounded-xl flex justify-center gap-2"
+                        esRecomendada || op.id === "safe"
+                          ? "w-full bg-indigo-600 text-white font-bold py-3.5 rounded-xl flex justify-center gap-2"
                           : "w-full bg-slate-900 text-white font-bold py-3.5 rounded-xl flex justify-center gap-2"
                       }
                     >
-                      {op.id === "safe" ? (
-                        <>
-                          Iniciar navegación <Navigation className="w-4 h-4" />
-                        </>
-                      ) : (
-                        "Iniciar con esta ruta"
-                      )}
+                      Iniciar navegación <Navigation className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
               );
             })}
+          </div>
+            </div>
+
+            <ZonaInteligenciaPanel
+              titulo="Riesgo en destino"
+              data={zonaDestino}
+              loading={zonaDestinoLoading}
+              compact
+            />
           </div>
         </div>
       )}

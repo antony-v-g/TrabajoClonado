@@ -17,17 +17,23 @@ namespace RutaSegura.Controllers
         private readonly ApplicationDbContext _context;
         private readonly RedisService _redis;
         private readonly MlNetService _ml;
+        private readonly AlertasInteligentesService _alertasInteligentes;
+        private readonly ReporteGeocodingService _geocoding;
         private readonly ILogger<ReportesController> _logger;
 
         public ReportesController(
             ApplicationDbContext context,
             RedisService redis,
             MlNetService ml,
+            AlertasInteligentesService alertasInteligentes,
+            ReporteGeocodingService geocoding,
             ILogger<ReportesController> logger)
         {
             _context = context;
             _redis = redis;
             _ml = ml;
+            _alertasInteligentes = alertasInteligentes;
+            _geocoding = geocoding;
             _logger = logger;
         }
 
@@ -40,6 +46,7 @@ namespace RutaSegura.Controllers
                 "Sin Iluminación" => "ZonaOscura",
                 "Hueco en Vía" => "Accidente",
                 "Accidente" => "Accidente",
+                "Vandalismo" => "Vandalismo",
                 "Otro peligro" => "Otro",
                 _ => null,
             };
@@ -49,7 +56,7 @@ namespace RutaSegura.Controllers
         [HttpGet]
         public async Task<IActionResult> GetReportes()
         {
-            var cacheKey = "reportes:todos:v2";
+            var cacheKey = "reportes:todos:v3";
 
             if (_redis.IsEnabled)
             {
@@ -74,6 +81,7 @@ namespace RutaSegura.Controllers
                     r.Estado,
                     r.FechaReporte,
                     r.NivelConfianzaIA,
+                    r.TipoPredichoMl,
                     r.Latitud,
                     r.Longitud,
                     r.EsAnonimo,
@@ -194,32 +202,46 @@ namespace RutaSegura.Controllers
 
         [Authorize(Roles = "Administrador")]
         [HttpPost("Aprobar/{id}")]
-        public async Task<IActionResult> Aprobar(int id)
+        public async Task<IActionResult> Aprobar(int id, CancellationToken ct)
         {
-            var reporte = await _context.Reportes.FindAsync(id);
+            var reporte = await _context.Reportes.FindAsync([id], ct);
             if (reporte == null) return NotFound();
 
             reporte.Estado = "Aprobado";
-            await _context.SaveChangesAsync();
+            await _geocoding.EnsureCoordinatesAsync(reporte, ct);
+            await _context.SaveChangesAsync(ct);
 
             await LimpiarCacheReportes(reporte.UsuarioId);
 
-            return Ok(new { success = true, message = "Reporte aprobado correctamente." });
+            return Ok(
+                new
+                {
+                    success = true,
+                    message = "Reporte aprobado correctamente.",
+                    tieneCoordenadas = ReporteGeocodingService.TieneCoordenadas(reporte),
+                });
         }
 
         [Authorize(Roles = "Administrador")]
         [HttpPost("Rechazar/{id}")]
-        public async Task<IActionResult> Rechazar(int id)
+        public async Task<IActionResult> Rechazar(int id, CancellationToken ct)
         {
-            var reporte = await _context.Reportes.FindAsync(id);
+            var reporte = await _context.Reportes.FindAsync([id], ct);
             if (reporte == null) return NotFound();
 
             reporte.Estado = "Rechazado";
-            await _context.SaveChangesAsync();
+            await _geocoding.EnsureCoordinatesAsync(reporte, ct);
+            await _context.SaveChangesAsync(ct);
 
             await LimpiarCacheReportes(reporte.UsuarioId);
 
-            return Ok(new { success = true, message = "Reporte rechazado." });
+            return Ok(
+                new
+                {
+                    success = true,
+                    message = "Reporte rechazado.",
+                    tieneCoordenadas = ReporteGeocodingService.TieneCoordenadas(reporte),
+                });
         }
 
         public class CrearReporteRequest
@@ -239,7 +261,9 @@ namespace RutaSegura.Controllers
 
         [Authorize]
         [HttpPost("Crear")]
-        public async Task<IActionResult> Crear([FromBody] CrearReporteRequest req)
+        public async Task<IActionResult> Crear(
+            [FromBody] CrearReporteRequest req,
+            CancellationToken ct)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
@@ -282,6 +306,7 @@ namespace RutaSegura.Controllers
                 !string.IsNullOrWhiteSpace(req.Latitud) && !string.IsNullOrWhiteSpace(req.Longitud);
 
             var nivelIa = 0f;
+            string? tipoPredichoMl = null;
             try
             {
                 await _ml.EnsureModelsAsync();
@@ -292,12 +317,15 @@ namespace RutaSegura.Controllers
                     DateTime.UtcNow);
                 if (clasificacion != null)
                 {
+                    tipoPredichoMl = clasificacion.TipoPredicho;
                     if (clasificacion.ProbabilidadesPorTipo.TryGetValue(codigoCatalogo, out var prob))
                         nivelIa = prob * 100f;
                     else if (string.Equals(
                                  clasificacion.TipoPredicho,
                                  codigoCatalogo,
                                  StringComparison.OrdinalIgnoreCase))
+                        nivelIa = (float)clasificacion.ConfianzaPct;
+                    else
                         nivelIa = (float)clasificacion.ConfianzaPct;
                 }
             }
@@ -321,7 +349,10 @@ namespace RutaSegura.Controllers
                 CatalogoId = cat?.Id,
                 ProyectoId = proyectoDefault?.Id,
                 NivelConfianzaIA = nivelIa,
+                TipoPredichoMl = tipoPredichoMl,
             };
+
+            await _geocoding.EnsureCoordinatesAsync(reporte, ct);
 
             try
             {
@@ -343,6 +374,7 @@ namespace RutaSegura.Controllers
             try
             {
                 await LimpiarCacheReportes(userId);
+                await _alertasInteligentes.EvaluarTrasReporteAsync(req.Ubicacion);
             }
             catch (Exception ex)
             {
@@ -358,6 +390,7 @@ namespace RutaSegura.Controllers
 
             try
             {
+                await _redis.RemoveAsync("reportes:todos:v3");
                 await _redis.RemoveAsync("reportes:todos:v2");
                 await _redis.RemoveAsync($"reportes:mios:{usuarioId}");
 

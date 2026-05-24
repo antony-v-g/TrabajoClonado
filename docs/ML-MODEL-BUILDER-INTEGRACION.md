@@ -19,7 +19,7 @@ backend/
     ├── MlNetService.cs          # Carga modelos y predicción
     ├── MlCsvDatasetLoader.cs    # Lee CSV (igual que Model Builder)
     ├── MlZoneQueryService.cs    # GET clasificar-zona + Redis
-    └── ExternalApisService.cs   # OpenWeather, catálogo APIs
+    └── ExternalApisService.cs   # WeatherAPI, catálogo APIs
 ```
 
 ---
@@ -144,7 +144,7 @@ Authorization: Bearer {token}
 |-------|-----|
 | `sesion:{jti}` | Validación JWT rápida |
 | `ml:zona:v1:...` | Caché predicción clasificación |
-| `ext:clima:lat:lon` | Caché OpenWeather |
+| `ext:clima:lat:lon` | Caché WeatherAPI |
 | `admin:resumen:v2` | Dashboard admin |
 | `admin:puntos-mapa:v2:{dias}` | Mapa de calor |
 
@@ -155,14 +155,14 @@ Authorization: Bearer {token}
 | API | Variable entorno | Endpoint proyecto |
 |-----|------------------|-------------------|
 | Google Maps | `VITE_GOOGLE_MAPS_API_KEY` | Front: mapas, Places, rutas |
-| OpenWeather | `OPENWEATHER_API_KEY` | `GET /api/external/clima` |
+| WeatherAPI | `WEATHERAPI_API_KEY` | `GET /api/external/clima` |
 | Catálogo | — | `GET /api/external/catalogo` |
 | Tráfico demo | — | `GET /api/external/trafico-demo` |
 
-### Cómo obtener OpenWeather (gratis)
+### Cómo obtener WeatherAPI (gratis)
 
-1. Registro en https://openweathermap.org/api
-2. En Render → Environment → `OPENWEATHER_API_KEY=tu_clave`
+1. Registro en https://www.weatherapi.com/signup.aspx
+2. En Render → Environment → `WEATHERAPI_API_KEY=tu_clave`
 3. Prueba: `/api/external/clima?lat=-12.04&lon=-77.04`
 
 ---
@@ -171,7 +171,7 @@ Authorization: Bearer {token}
 
 1. `git push` con `Datasets/`, `Models/` (o vacío + entrenamiento auto).
 2. Render **Deploy latest commit**.
-3. Variables: `Redis__ConnectionString`, `Redis__Password`, `VITE_GOOGLE_MAPS_API_KEY`, `OPENWEATHER_API_KEY` (opcional).
+3. Variables: `Redis__ConnectionString`, `Redis__Password`, `VITE_GOOGLE_MAPS_API_KEY`, `WEATHERAPI_API_KEY` (opcional).
 4. Swagger: `https://tu-app.onrender.com/swagger`
 
 ---

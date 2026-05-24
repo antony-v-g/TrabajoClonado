@@ -90,8 +90,7 @@ namespace RutaSegura.Controllers
             };
             _context.RutasHistorial.Add(r);
             await _context.SaveChangesAsync();
-            if (_redis.IsEnabled)
-                await _redis.RemoveAsync(DashboardCacheKeys.Lugares(id));
+            await DashboardCacheKeys.InvalidateLugaresAsync(_redis, id);
             return Ok(new
             {
                 r.Id,
@@ -114,8 +113,7 @@ namespace RutaSegura.Controllers
             if (r is null) return NotFound();
             _context.RutasHistorial.Remove(r);
             await _context.SaveChangesAsync();
-            if (_redis.IsEnabled)
-                await _redis.RemoveAsync(DashboardCacheKeys.Lugares(userId));
+            await DashboardCacheKeys.InvalidateLugaresAsync(_redis, userId);
             return NoContent();
         }
     }

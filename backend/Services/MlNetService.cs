@@ -17,7 +17,7 @@ public class MlNetService
     private PredictionEngine<ZoneSafetyTrainingRow, ZoneSafetyPredictionOutput>? _zoneSafety;
     private MLContext? _ml;
     private readonly SemaphoreSlim _trainGate = new(1, 1);
-    private string[] _incidentLabels = ["Robo", "Asalto", "Accidente", "ZonaOscura", "Otro"];
+    private string[] _incidentLabels = ["Robo", "Asalto", "Accidente", "ZonaOscura", "Vandalismo", "Otro"];
     private string[] _zoneLabels =
     [
         ZoneSafetyPresentation.Segura,
@@ -130,7 +130,8 @@ public class MlNetService
         float trafico,
         float iluminacion,
         float hora,
-        float incidentesRecientes = 0f)
+        float incidentesRecientes = 0f,
+        float condicionClima = 0f)
     {
         var input = new ZoneSafetyTrainingRow
         {
@@ -140,6 +141,7 @@ public class MlNetService
             Iluminacion = Math.Clamp(iluminacion, 0f, 1f),
             Hora = Math.Clamp(hora, 0f, 23.99f),
             IncidentesRecientes = Math.Clamp(incidentesRecientes, 0f, 1f),
+            CondicionClima = Math.Clamp(condicionClima, 0f, 1f),
         };
 
         if (_zoneSafety != null)
@@ -161,7 +163,8 @@ public class MlNetService
             + input.Trafico * 0.18f
             + (1f - input.Iluminacion) * 0.22f
             + (input.Hora >= 19f || input.Hora < 6f ? 0.10f : 0f)
-            + input.IncidentesRecientes * 0.15f;
+            + input.IncidentesRecientes * 0.15f
+            + input.CondicionClima * 0.12f;
         var nivel = riesgo >= 0.62f
             ? ZoneSafetyPresentation.Peligrosa
             : riesgo >= 0.38f
@@ -245,6 +248,29 @@ public class MlNetService
         }
 
         return list.OrderByDescending(r => r.PreferenceScore).ToList();
+    }
+
+    public IReadOnlyList<RouteRecommendationResult> RecommendRouteProfilesConClima(
+        int usuarioId,
+        string origen,
+        string destino,
+        ClimaImpacto? impactoDestino)
+    {
+        var list = RecommendRouteProfiles(usuarioId, origen, destino).ToList();
+        if (impactoDestino is null || impactoDestino.CondicionClima < 0.25f)
+            return list;
+
+        var safe = list.FirstOrDefault(r => r.VarianteId == "segura");
+        var rest = list.Where(r => r.VarianteId != "segura").ToList();
+        if (safe is null) return list;
+
+        var boosted = safe with
+        {
+            PreferenceScore = Math.Min(5, safe.PreferenceScore + 0.6f),
+            SeguridadPct = Math.Min(100, safe.SeguridadPct + 12),
+            Nombre = "Ruta segura (ML + clima)",
+        };
+        return new[] { boosted }.Concat(rest).ToList();
     }
 
     private static float SanitizeRouteScore(float score)

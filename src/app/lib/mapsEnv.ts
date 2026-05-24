@@ -23,7 +23,7 @@ export function hasPlaceholderMapsKey(): boolean {
 }
 
 /** Referencia estable: evita recargar LoadScript en cada render. */
-export const GOOGLE_MAPS_LIBRARIES = ["places"] as const;
+export const GOOGLE_MAPS_LIBRARIES = ["places", "geometry"] as const;
 
 const loaderStaticOptions = {
   version: "weekly" as const,

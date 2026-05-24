@@ -7,7 +7,21 @@ public static class AdminCacheKeys
     public const string Config = "admin:config:v1";
     public const string RedisEstado = "admin:redis-estado:v1";
 
-    public static string PuntosMapa(int maxDias) => $"admin:puntos-mapa:v2:{maxDias}";
+    /** Días usados en mapa admin (60), mapa usuario (30), etc. */
+    private static readonly int[] PuntosMapaDias =
+        [1, 7, 14, 30, 60, 90, 120, 180, 365];
+
+    public static string PuntosMapa(int maxDias) => $"admin:puntos-mapa:v3:{maxDias}";
+
+    public static async Task InvalidatePuntosMapaAsync(RedisService redis)
+    {
+        if (!redis.IsEnabled) return;
+        foreach (var d in PuntosMapaDias)
+        {
+            await redis.RemoveAsync(PuntosMapa(d));
+            await redis.RemoveAsync($"admin:puntos-mapa:v2:{d}");
+        }
+    }
 
     public static async Task InvalidateAllAsync(RedisService redis)
     {
@@ -16,8 +30,7 @@ public static class AdminCacheKeys
         await redis.RemoveAsync(Alertas);
         await redis.RemoveAsync(Config);
         await redis.RemoveAsync(RedisEstado);
-        for (var d = 1; d <= 365; d += 30)
-            await redis.RemoveAsync(PuntosMapa(d));
+        await InvalidatePuntosMapaAsync(redis);
         await DashboardAlertasService.InvalidateAlertasCacheAsync(redis);
     }
 }

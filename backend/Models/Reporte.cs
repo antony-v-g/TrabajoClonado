@@ -38,6 +38,10 @@ namespace RutaSegura.Models
         // Campo para predicción IA
         public float NivelConfianzaIA { get; set; }
 
+        /// <summary>Tipo sugerido por ML.NET al crear el reporte (p. ej. Robo, Vandalismo).</summary>
+        [MaxLength(50)]
+        public string? TipoPredichoMl { get; set; }
+
         public bool EsAnonimo { get; set; }
     }
 }

@@ -9,6 +9,10 @@ export type MapaEventoResp = {
   eventoGuardadoEnRedis: boolean;
   indicadorZona?: string;
   etiquetaZona?: string;
+  nivelRiesgoContextual?: string;
+  motivosRiesgo?: string[];
+  climaResumen?: string;
+  riesgoEstimadoPct?: number;
 };
 
 export type EventoToast = {
@@ -47,14 +51,26 @@ export function toastFromMapaEvento(
       : " (SQLite; Redis no activo)";
 
   if (tipo === "sos") {
+    const motivos =
+      data.motivosRiesgo && data.motivosRiesgo.length > 0
+        ? ` Motivos: ${data.motivosRiesgo.join(" · ")}.`
+        : "";
+    const clima = data.climaResumen ? ` Clima: ${data.climaResumen}.` : "";
+    const nivel = data.nivelRiesgoContextual
+      ? ` Nivel de riesgo: ${data.nivelRiesgoContextual}`
+      : "";
+    const pct =
+      data.riesgoEstimadoPct != null ? ` (${data.riesgoEstimadoPct}%).` : ".";
+
     return {
       kind: "sos",
       titulo: data.titulo,
       mensaje: data.mensaje + redisNote,
       extra:
-        data.etiquetaZona && data.indicadorZona
+        `${nivel}${pct}${clima}${motivos}` ||
+        (data.etiquetaZona && data.indicadorZona
           ? `${data.indicadorZona} Zona ML.NET: ${data.etiquetaZona} · ${data.contactosNotificados} contacto(s)`
-          : undefined,
+          : undefined),
     };
   }
 

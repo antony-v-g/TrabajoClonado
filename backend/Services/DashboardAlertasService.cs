@@ -33,7 +33,7 @@ public class DashboardAlertasService
     {
         var n = Math.Clamp(take, 1, 20);
         var days = Math.Clamp(maxDays, 1, 365);
-        var cacheKey = $"alertas:recientes:v6:{n}:{days}";
+        var cacheKey = $"alertas:recientes:v7:{n}:{days}";
 
         if (_redis.IsEnabled)
         {
@@ -62,8 +62,7 @@ public class DashboardAlertasService
             .ToDictionary(g => g.Key, g => g.Count());
 
         var ordenados = reportes
-            .OrderBy(r => SistemaConfigService.EsReporteMenor(r.FechaReporte, cfg.CaducidadReporteMenorHoras))
-            .ThenByDescending(r => r.FechaReporte)
+            .OrderByDescending(r => r.FechaReporte)
             .Take(n)
             .ToList();
 
@@ -133,7 +132,10 @@ public class DashboardAlertasService
         for (var take = 1; take <= 20; take++)
         {
             foreach (var days in new[] { 7, 14, 30, 60, 365 })
+            {
+                await redis.RemoveAsync($"alertas:recientes:v7:{take}:{days}");
                 await redis.RemoveAsync($"alertas:recientes:v6:{take}:{days}");
+            }
         }
     }
 

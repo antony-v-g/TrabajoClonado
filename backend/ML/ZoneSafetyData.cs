@@ -13,6 +13,9 @@ public class ZoneSafetyTrainingRow
     public float Hora { get; set; }
     /// <summary>Incidentes en las últimas horas (normalizado 0–1). Columna CSV: IncidentesRecientes.</summary>
     public float IncidentesRecientes { get; set; }
+
+    /// <summary>Condición climática adversa normalizada 0–1 (lluvia, neblina, tormenta).</summary>
+    public float CondicionClima { get; set; }
 }
 
 public class ZoneSafetyPredictionOutput

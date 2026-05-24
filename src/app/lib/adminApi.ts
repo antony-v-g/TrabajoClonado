@@ -58,6 +58,36 @@ export async function adminFetchJson<T>(
   return { meta, data: raw as T };
 }
 
+export type PrediccionZona = {
+  ubicacion: string;
+  reportes7d: number;
+  reportesSemanaAnterior: number;
+  deltaPct: number;
+  tipoIncidenteDominante: string;
+  nivelZonaMl: string;
+  etiquetaZona: string;
+  indicadorZona: string;
+  confianzaMlPct: number;
+  riesgoPredichoPct: number;
+  mensajePredictivo: string;
+  requiereAlerta: boolean;
+};
+
+export async function fetchPrediccionesAdmin(
+  token: string,
+  take = 6,
+): Promise<PrediccionZona[]> {
+  const r = await fetch(apiUrl(`/api/Admin/predicciones?take=${take}`), {
+    headers: authJsonHeaders(token),
+    cache: "no-store",
+  });
+  if (!r.ok) {
+    throw new Error(await readApiErrorMessage(r, "No se pudieron cargar predicciones"));
+  }
+  const j = (await r.json()) as { predicciones?: PrediccionZona[] };
+  return Array.isArray(j.predicciones) ? j.predicciones : [];
+}
+
 export type AnalisisMlReporte = {
   reporteId: number;
   tipoDeclarado: string;

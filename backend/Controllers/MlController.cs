@@ -45,12 +45,16 @@ public class MlController : ControllerBase
         return Ok(result);
     }
 
-    /// <summary>Recomienda variantes de ruta (segura / rápida / equilibrada) con Matrix Factorization.</summary>
+    /// <summary>Recomienda variantes de ruta; con clima adverso prioriza la ruta segura.</summary>
     [HttpGet("recomendar-rutas")]
     [Authorize]
     public async Task<IActionResult> RecomendarRutas(
         [FromQuery] string origen,
         [FromQuery] string destino,
+        [FromQuery] double? dest_lat,
+        [FromQuery] double? dest_lon,
+        [FromQuery] double? orig_lat,
+        [FromQuery] double? orig_lon,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(origen) || string.IsNullOrWhiteSpace(destino))
@@ -58,14 +62,46 @@ public class MlController : ControllerBase
 
         await _ml.EnsureModelsAsync(ct);
         var userId = int.Parse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)!.Value);
-        var items = _ml.RecommendRouteProfiles(userId, origen.Trim(), destino.Trim());
+
+        ClimaImpacto? impactoDest = null;
+        ClimaImpacto? impactoOrig = null;
+        var hora = ClimaImpactoAnalyzer.HoraLocalPeru();
+        var advertencias = new List<string>();
+
+        if (dest_lat.HasValue && dest_lon.HasValue)
+        {
+            var ctx = await _external.GetClimaContextoAsync(dest_lat.Value, dest_lon.Value, hora, ct);
+            impactoDest = ctx.Impacto;
+            if (impactoDest.CondicionClima >= 0.25f)
+                advertencias.Add($"Destino: {ctx.Clima.Descripcion}. {impactoDest.RecomendacionRuta}");
+        }
+
+        if (orig_lat.HasValue && orig_lon.HasValue)
+        {
+            var ctxOrig = await _external.GetClimaContextoAsync(orig_lat.Value, orig_lon.Value, hora, ct);
+            impactoOrig = ctxOrig.Impacto;
+            if (impactoOrig.Lluvia || impactoOrig.Tormenta || impactoOrig.Neblina)
+                advertencias.Add($"Origen: {ctxOrig.Clima.Descripcion}.");
+        }
+
+        if (impactoDest is { CondicionClima: >= 0.35f })
+            advertencias.Add("☔ Ruta más segura recomendada por condiciones climáticas en el destino.");
+
+        var items = _ml.RecommendRouteProfilesConClima(userId, origen.Trim(), destino.Trim(), impactoDest);
+        var influidoPorClima = impactoDest is { CondicionClima: >= 0.25f };
 
         return Ok(
             new
             {
                 origen,
                 destino,
-                motor = "ML.NET MatrixFactorization",
+                motor = influidoPorClima
+                    ? "ML.NET MatrixFactorization + WeatherAPI"
+                    : "ML.NET MatrixFactorization",
+                influidoPorClima,
+                climaDestino = impactoDest,
+                climaOrigen = impactoOrig,
+                advertenciasClima = advertencias,
                 recomendaciones = items,
             });
     }
@@ -87,8 +123,7 @@ public class MlController : ControllerBase
     }
 
     /// <summary>
-    /// Clasifica una zona (ML.NET Model Builder — Data Classification).
-    /// Ejemplo: GET /api/ml/clasificar-zona?zona=Centro%20de%20Lima&amp;cantidad_reportes=0.7&amp;hora=22&amp;iluminacion=0.2&amp;trafico=0.8&amp;incidentes_recientes=4
+    /// Clasifica una zona (ML.NET — incluye CondicionClima si se envía).
     /// </summary>
     [HttpGet("clasificar-zona")]
     [AllowAnonymous]
@@ -99,6 +134,7 @@ public class MlController : ControllerBase
         [FromQuery] float iluminacion = 0.6f,
         [FromQuery] float trafico = 0.4f,
         [FromQuery] float incidentes_recientes = 0f,
+        [FromQuery] float condicion_clima = 0f,
         CancellationToken ct = default)
     {
         var response = await _zonas.ClasificarAsync(
@@ -108,6 +144,7 @@ public class MlController : ControllerBase
             iluminacion,
             trafico,
             incidentes_recientes,
+            condicion_clima,
             ct);
 
         return Ok(new
@@ -136,32 +173,138 @@ public class MlController : ControllerBase
             req.Iluminacion,
             req.Trafico,
             req.IncidentesRecientes,
+            req.CondicionClima,
             ct);
         return Ok(response);
     }
 
-    /// <summary>Contexto externo + ML para una zona (clima demo + clasificación).</summary>
+    /// <summary>Contexto externo + ML para una zona (WeatherAPI + clasificación + riesgo horario).</summary>
     [HttpGet("contexto-zona")]
     [AllowAnonymous]
     public async Task<IActionResult> ContextoZona(
         [FromQuery] string zona = "Centro de Lima",
         [FromQuery] double lat = -12.0464,
         [FromQuery] double lon = -77.0428,
+        [FromQuery] float cantidad_reportes = 0.5f,
+        [FromQuery] float iluminacion = 0.6f,
+        [FromQuery] float trafico = 0.4f,
+        [FromQuery] float incidentes_recientes = 1f,
+        [FromQuery] float hora_local = 12f,
         CancellationToken ct = default)
     {
-        var clima = await _external.GetClimaAsync(lat, lon, ct);
-        var trafico = _external.GetTraficoDemo(zona);
+        var ctx = await _external.GetClimaContextoAsync(lat, lon, hora_local, ct);
+        var traficoInfo = _external.GetTraficoDemo(zona);
+        var traficoFactor = trafico > 0 ? trafico : traficoInfo.FactorNormalizado;
+        var ilum = iluminacion > 0
+            ? ClimaImpactoAnalyzer.AjustarIluminacion(iluminacion, ctx.Impacto)
+            : ClimaImpactoAnalyzer.IluminacionPorDefecto(ctx.Clima, ctx.Impacto);
+
         var ml = await _zonas.ClasificarAsync(
             zona,
-            0.5f,
-            (float)DateTime.Now.Hour,
-            clima.TemperaturaC < 18 ? 0.4f : 0.7f,
-            trafico.FactorNormalizado,
-            1f,
+            cantidad_reportes,
+            hora_local,
+            ilum,
+            traficoFactor,
+            incidentes_recientes,
+            ctx.Impacto.CondicionClima,
             ct);
 
-        return Ok(new { zona, clima, trafico, clasificacion = ml });
+        var riesgoHorario = await BuildRiesgoHorarioAsync(
+            zona,
+            cantidad_reportes,
+            ilum,
+            traficoFactor,
+            incidentes_recientes,
+            ctx.Impacto.CondicionClima,
+            hora_local,
+            ct);
+
+        return Ok(new
+        {
+            zona,
+            lat,
+            lon,
+            clima = ctx.Clima,
+            climaImpacto = ctx.Impacto,
+            trafico = traficoInfo,
+            clasificacion = ml,
+            riesgoHorario,
+        });
     }
+
+    /// <summary>Comparación ML de riesgo por franja horaria (tarde / noche / ahora).</summary>
+    [HttpGet("riesgo-horario")]
+    [AllowAnonymous]
+    public async Task<IActionResult> RiesgoHorario(
+        [FromQuery] string zona = "Lima",
+        [FromQuery] float cantidad_reportes = 0.5f,
+        [FromQuery] float iluminacion = 0.6f,
+        [FromQuery] float trafico = 0.4f,
+        [FromQuery] float incidentes_recientes = 1f,
+        [FromQuery] float condicion_clima = 0f,
+        [FromQuery] float hora_local = 12f,
+        CancellationToken ct = default)
+    {
+        var franjas = await BuildRiesgoHorarioAsync(
+            zona,
+            cantidad_reportes,
+            iluminacion,
+            trafico,
+            incidentes_recientes,
+            condicion_clima,
+            hora_local,
+            ct);
+        return Ok(new { zona, franjas });
+    }
+
+    private async Task<IReadOnlyList<RiesgoFranjaDto>> BuildRiesgoHorarioAsync(
+        string zona,
+        float cantidadReportes,
+        float iluminacion,
+        float trafico,
+        float incidentesRecientes,
+        float condicionClima,
+        float horaLocal,
+        CancellationToken ct)
+    {
+        var slots = new (float Hora, string Franja)[]
+        {
+            (14f, "14:00 · tarde"),
+            (20f, "20:00 · noche"),
+            (horaLocal, "Ahora"),
+        };
+
+        var result = new List<RiesgoFranjaDto>();
+        foreach (var (hora, franja) in slots)
+        {
+            var ml = await _zonas.ClasificarAsync(
+                zona,
+                cantidadReportes,
+                hora,
+                iluminacion,
+                trafico,
+                incidentesRecientes,
+                condicionClima,
+                ct);
+            result.Add(new RiesgoFranjaDto(
+                franja,
+                hora,
+                ml.Riesgo,
+                ml.Confianza,
+                ml.IndicadorVisual,
+                ml.Etiqueta));
+        }
+
+        return result;
+    }
+
+    public record RiesgoFranjaDto(
+        string Franja,
+        float Hora,
+        string Riesgo,
+        double Confianza,
+        string IndicadorVisual,
+        string Etiqueta);
 
     public class ClasificarZonaRequest
     {
@@ -171,6 +314,7 @@ public class MlController : ControllerBase
         public float Iluminacion { get; set; }
         public float Hora { get; set; } = 12f;
         public float IncidentesRecientes { get; set; }
+        public float CondicionClima { get; set; }
     }
 
     public class ClasificarIncidenteRequest

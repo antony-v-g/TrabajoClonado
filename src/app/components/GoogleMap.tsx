@@ -12,6 +12,7 @@ import {
   Marker,
   InfoWindow,
 } from "@react-google-maps/api";
+import { useMapHeatmapOverlay } from "./MapHeatmapOverlay";
 import type { LatLngLiteral } from "../types/maps";
 import {
   getGoogleMapsApiKey,
@@ -76,6 +77,10 @@ type GoogleMapViewProps = {
    * Si se envía y no está vacío, reemplaza los pins por defecto (p. ej. reportes reales con coordenadas).
    */
   marcadoresDinamicos?: MapaMarcadorDinamico[] | null;
+  /** Puntos para capa de calor (admin). */
+  heatmapPoints?: Array<{ lat: number; lng: number; weight?: number }> | null;
+  showHeatmap?: boolean;
+  showMarkers?: boolean;
 };
 
 export function GoogleMapView({
@@ -84,6 +89,9 @@ export function GoogleMapView({
   children,
   focusPin,
   marcadoresDinamicos,
+  heatmapPoints,
+  showHeatmap = false,
+  showMarkers = true,
 }: GoogleMapViewProps) {
   const mapKey = getGoogleMapsApiKey();
   const [selectedMarker, setSelectedMarker] = useState<string | null>(null);
@@ -109,10 +117,18 @@ export function GoogleMapView({
   const mapCenter = useMemo(() => center ?? defaultCenter, [center]);
   const mapZoom = zoom ?? 15;
   const mapRef = useRef<google.maps.Map | null>(null);
+  const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
 
   const onMapLoad = useCallback((map: google.maps.Map) => {
     mapRef.current = map;
+    setMapInstance(map);
   }, []);
+
+  useMapHeatmapOverlay(
+    mapInstance,
+    heatmapPoints ?? undefined,
+    showHeatmap && !children,
+  );
 
   useEffect(() => {
     const map = mapRef.current;
@@ -141,6 +157,29 @@ export function GoogleMapView({
           : "Punto de referencia (demo).",
     }));
   }, [marcadoresDinamicos]);
+
+  const renderMarkers =
+    showMarkers &&
+    !children &&
+    marcadoresEnMapa.map((marker) => (
+      <Marker
+        key={marker.id}
+        position={marker.position}
+        onClick={() => onMarkerClick(marker.id)}
+        label={{
+          text: marker.label,
+          color: "white",
+          fontWeight: "bold",
+        }}
+        icon={{
+          path: "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z",
+          fillColor: marker.color,
+          fillOpacity: 1,
+          strokeWeight: 0,
+          scale: 1.4,
+        }}
+      />
+    ));
 
   if (hasPlaceholderMapsKey()) {
     return (
@@ -224,27 +263,7 @@ export function GoogleMapView({
         mapTypeControl: false,
       }}
     >
-      {children
-        ? children
-        : marcadoresEnMapa.map((marker) => (
-            <Marker
-              key={marker.id}
-              position={marker.position}
-              onClick={() => onMarkerClick(marker.id)}
-              label={{
-                text: marker.label,
-                color: "white",
-                fontWeight: "bold",
-              }}
-              icon={{
-                path: "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z",
-                fillColor: marker.color,
-                fillOpacity: 1,
-                strokeWeight: 0,
-                scale: 1.4,
-              }}
-            />
-          ))}
+      {children ? children : renderMarkers}
 
       {!children && focusPin ? (
         <Marker
