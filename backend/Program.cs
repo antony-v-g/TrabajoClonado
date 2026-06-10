@@ -9,6 +9,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.ChatCompletion;
 using RutaSegura.Data;
 using RutaSegura.ML;
 using RutaSegura.Services;
@@ -162,14 +163,15 @@ var openAiOrgId = builder.Configuration["OpenAI:OrgId"];
 if (!string.IsNullOrEmpty(openAiApiKey))
 {
     var kernelBuilder = Kernel.CreateBuilder();
-    
-    // Add OpenAI text generation service
-    kernelBuilder.AddOpenAITextGeneration(openAiModelId, openAiApiKey, openAiOrgId);
-    
+
+    // Add OpenAI text generation service (SK 1.27.0)
+    kernelBuilder.AddOpenAIChatCompletion(openAiModelId, openAiApiKey, openAiOrgId);
+
     var kernel = kernelBuilder.Build();
     builder.Services.AddSingleton(kernel);
     builder.Services.AddScoped<SemanticKernelService>();
-    
+    builder.Services.AddScoped<SemanticAgentService>();
+
     builder.Services.AddSingleton<ILoggerFactory>(LoggerFactory.Create(b => b.AddConsole()));
 }
 else
