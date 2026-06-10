@@ -15,9 +15,7 @@
   </ItemGroup>
 
   <Target Name="WarnIfFrontendNotBuilt" BeforeTargets="Run">
-    <Warning
-      Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/build-id.txt')"
-      Text="No hay frontend en wwwroot. Desde la raíz del repo ejecuta: npm run build" />
+    <Warning Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/build-id.txt')" Text="No hay frontend en wwwroot. Desde la raíz del repo ejecuta: npm run build" />
   </Target>
 
   <!-- Manifiesto viejo (otra PC/ruta) rompe dotnet run si quedó en bin/ -->
@@ -46,6 +44,8 @@
       <PrivateAssets>none</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="Microsoft.SemanticKernel" Version="1.27.0" />
+    <PackageReference Include="Microsoft.SemanticKernel.Connectors.OpenAI" Version="1.27.0" />
     <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="8.0.0">
       <PrivateAssets>all</PrivateAssets>
