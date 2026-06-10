@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Microsoft.SemanticKernel;
 using RutaSegura.Data;
 using RutaSegura.ML;
 using RutaSegura.Services;
@@ -153,6 +154,34 @@ builder.Services.AddScoped<ReporteGeocodingService>();
 builder.Services.AddHostedService<MlStartupHostedService>();
 builder.Services.AddHostedService<AlertasInteligentesBackgroundService>();
 
+// Semantic Kernel + OpenAI Configuration
+var openAiApiKey = builder.Configuration["OpenAI:ApiKey"];
+var openAiModelId = builder.Configuration["OpenAI:ModelId"] ?? "gpt-4o-mini";
+var openAiOrgId = builder.Configuration["OpenAI:OrgId"];
+
+if (!string.IsNullOrEmpty(openAiApiKey))
+{
+    var kernelBuilder = Kernel.CreateBuilder();
+    
+    // Add OpenAI text generation service
+    kernelBuilder.AddOpenAITextGeneration(openAiModelId, openAiApiKey, openAiOrgId);
+    
+    var kernel = kernelBuilder.Build();
+    builder.Services.AddSingleton(kernel);
+    builder.Services.AddScoped<SemanticKernelService>();
+    
+    builder.Services.AddSingleton<ILoggerFactory>(LoggerFactory.Create(b => b.AddConsole()));
+}
+else
+{
+    builder.Services.AddSingleton(sp =>
+    {
+        var logger = sp.GetRequiredService<ILogger<Program>>();
+        logger.LogWarning("OpenAI:ApiKey not configured. Semantic Kernel services will not be available.");
+        // Return a no-op kernel to prevent DI errors
+        return Kernel.CreateBuilder().Build();
+    });
+}
 
 var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT key is missing.");
 var jwtIssuer = builder.Configuration["Jwt:Issuer"];
